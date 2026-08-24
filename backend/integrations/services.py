@@ -8,9 +8,25 @@ from metrics.services import ingest_metrics
 def persist_collection(connector, payload):
     hosts = payload.get("hosts") or []
     vms = payload.get("vms") or []
+    datastores = payload.get("datastores") or []
     metric_count = 0
-    for resource in [*hosts, *vms]:
+    seen_external_ids = set()
+    for resource in [*hosts, *vms, *datastores]:
         external_id = str(resource["external_id"])
+        seen_external_ids.add(external_id)
+        state = str(resource.get("state", ""))
+        offline_states = {
+            "poweredoff",
+            "off",
+            "stopped",
+            "unavailable",
+            "inaccessible",
+        }
+        machine_status = (
+            Machine.Status.OFFLINE
+            if state.lower() in offline_states
+            else Machine.Status.ONLINE
+        )
         machine, _ = Machine.objects.update_or_create(
             customer=connector.customer,
             source_type=connector.kind,
@@ -18,7 +34,7 @@ def persist_collection(connector, payload):
             defaults={
                 "environment": connector.environment,
                 "hostname": resource.get("name") or external_id,
-                "status": Machine.Status.ONLINE,
+                "status": machine_status,
                 "last_seen": timezone.now(),
                 "metadata": {
                     "connector_id": str(connector.pk),
@@ -58,7 +74,34 @@ def persist_collection(connector, payload):
             metric_count += ingest_metrics(
                 machine=machine, source_type=connector.kind, items=items
             )
+            if machine_status == Machine.Status.OFFLINE:
+                Machine.objects.filter(pk=machine.pk).update(
+                    status=Machine.Status.OFFLINE
+                )
+    stale_assets = connector.assets.exclude(external_id__in=seen_external_ids)
+    for asset in stale_assets.select_related("machine"):
+        asset.state = "UNAVAILABLE"
+        asset.save(update_fields=["state"])
+        if asset.machine and asset.machine.status != Machine.Status.OFFLINE:
+            asset.machine.status = Machine.Status.OFFLINE
+            asset.machine.save(update_fields=["status", "updated_at"])
+            from realtime.publisher import publish
+
+            publish(
+                connector.customer,
+                "machine.offline",
+                {
+                    "machine_id": str(asset.machine_id),
+                    "hostname": asset.machine.hostname,
+                },
+                asset.machine_id,
+            )
     connector.last_sync_at = timezone.now()
     connector.last_error = ""
     connector.save(update_fields=["last_sync_at", "last_error"])
-    return {"hosts": len(hosts), "vms": len(vms), "metrics": metric_count}
+    return {
+        "hosts": len(hosts),
+        "vms": len(vms),
+        "datastores": len(datastores),
+        "metrics": metric_count,
+    }

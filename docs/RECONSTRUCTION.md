@@ -19,11 +19,11 @@ constitue une nouvelle baseline autonome, versionnée et reproductible.
 | Contrôle | Résultat vérifié |
 |---|---|
 | Migrations PostgreSQL depuis une base vide | Succès |
-| Tests backend sur SQLite | 21/21 |
-| Tests backend sur PostgreSQL | 21/21 |
-| Couverture backend | 81 % |
-| Tests agent Windows | 4/4 |
-| Tests frontend | 5/5 |
+| Tests backend sur SQLite | 45/45, 3 ignorés car concurrence PostgreSQL |
+| Tests backend sur PostgreSQL | 48/48 |
+| Couverture backend | 61 % (mesure large incluant API et migrations) |
+| Tests agent Windows | 8/8 |
+| Tests frontend | 10/10 |
 | Ruff | Succès, zéro erreur |
 | ESLint | Succès, zéro avertissement |
 | Build Vite production | Succès |
@@ -34,8 +34,9 @@ constitue une nouvelle baseline autonome, versionnée et reproductible.
 ## Éléments vérifiés uniquement par isolation
 
 Les collecteurs VMware et Hyper-V ont une implémentation réelle et des chemins
-de test sans données inventées. Ils n'ont pas été connectés à un vCenter ou à un
-hôte Hyper-V de production durant cette reconstruction. L'envoi email a été
+de test sans données inventées. VMware n'a pas été connecté à un vCenter. Hyper-V
+a été tenté sur l'hôte local, mais `Get-VM` a refusé l'accès faute de permissions;
+il n'est donc pas validé comme intégration réelle. L'envoi email a été
 validé avec un backend de développement; un test SMTP réel reste nécessaire avec
 les paramètres de l'organisation. L'installation du service Windows doit être
 effectuée sur une machine Windows avec élévation administrateur.

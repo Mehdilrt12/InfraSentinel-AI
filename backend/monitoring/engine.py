@@ -5,7 +5,7 @@ from django.db.models import Q
 from django.utils import timezone
 from metrics.models import NormalizedMetric
 from inventory.models import Machine
-from .alert_service import create_or_update_alert
+from .alert_service import create_or_update_alert, resolve_open_alert
 from .models import MonitoringRule, RuleState
 
 OPERATORS = {
@@ -16,6 +16,22 @@ OPERATORS = {
     "==": operator.eq,
     "!=": operator.ne,
 }
+
+DIMENSION_FIELDS = (
+    "service_name",
+    "mountpoint",
+    "device",
+    "gpu_index",
+    "datastore",
+)
+
+
+def _dimension(metric):
+    for field in DIMENSION_FIELDS:
+        value = metric.metadata.get(field)
+        if value not in (None, ""):
+            return f"{field}:{value}"
+    return ""
 
 
 def _rules_for(metric):
@@ -37,16 +53,28 @@ def evaluate_metric(metric):
     triggered = []
     now = metric.timestamp
     for rule in _rules_for(metric):
+        dimension = _dimension(metric)
         state, _ = RuleState.objects.select_for_update().get_or_create(
-            rule=rule, machine=metric.machine
+            rule=rule,
+            machine=metric.machine,
+            dimension_key=dimension,
         )
+        if state.last_evaluated_at and now <= state.last_evaluated_at:
+            continue
         matches = OPERATORS[rule.operator](metric.metric_value, rule.threshold)
         state.last_evaluated_at = now
         state.last_value = metric.metric_value
         if not matches:
+            was_active = state.active
             state.first_true_at = None
             state.active = False
             state.save()
+            if was_active:
+                resolve_open_alert(
+                    metric.machine,
+                    "RULE_THRESHOLD",
+                    f"{rule.pk}:{dimension}",
+                )
             continue
         if state.first_true_at is None:
             state.first_true_at = now
@@ -65,8 +93,10 @@ def evaluate_metric(metric):
                     "rule_id": str(rule.pk),
                     "duration_seconds": elapsed,
                     "source_type": metric.source_type,
+                    "dimension": dimension,
+                    "metric_metadata": metric.metadata,
                 },
-                source_key=str(rule.pk),
+                source_key=f"{rule.pk}:{dimension}",
                 cooldown_seconds=rule.cooldown_seconds,
             )
             state.active = True

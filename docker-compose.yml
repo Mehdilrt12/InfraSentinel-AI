@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
-      - "${POSTGRES_PORT}:5432"
+      - "${POSTGRES_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -18,7 +18,7 @@ services:
     image: redis:7.4-alpine
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "${REDIS_PORT}:6379"
+      - "${REDIS_BIND_ADDRESS:-127.0.0.1}:${REDIS_PORT}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -30,13 +30,16 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    command: celery -A config worker -l INFO
+    command: celery -A config worker -l INFO -Q celery
     env_file: ./backend/.env
     environment: &service_environment
       POSTGRES_HOST: db
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
+      ML_MODEL_DIR: /app/model_store
+    volumes:
+      - model_store:/app/model_store
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -47,6 +50,8 @@ services:
     command: celery -A config beat -l INFO
     env_file: ./backend/.env
     environment: *service_environment
+    volumes:
+      - model_store:/app/model_store
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -57,6 +62,8 @@ services:
     command: daphne -b 0.0.0.0 -p 8000 config.asgi:application
     env_file: ./backend/.env
     environment: *service_environment
+    volumes:
+      - model_store:/app/model_store
     ports:
       - "8000:8000"
     depends_on:
@@ -65,3 +72,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  model_store:

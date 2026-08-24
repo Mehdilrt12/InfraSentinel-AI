@@ -9,4 +9,7 @@ La clé SHA-256 machine/type/source corrèle les répétitions dans une alerte o
 Les occurrences et la dernière observation sont mises à jour sans créer une ligne
 par échantillon. Le cooldown des notifications empêche le spam. Résoudre une
 alerte permet à un événement ultérieur de créer un nouvel incident durable.
-
+Le verrou PostgreSQL porté par la machine sérialise la création concurrente et la
+contrainte partielle interdit deux alertes ouvertes de même clé. La récupération
+d'une condition de règle ou d'une machine résout l'incident actif et publie
+`alert.updated`.

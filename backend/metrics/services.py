@@ -19,9 +19,9 @@ def ingest_metrics(*, machine, source_type, items):
     )
     keys = {row["idempotency_key"] for row in rows if row["idempotency_key"]}
     existing = set(
-        NormalizedMetric.objects.filter(idempotency_key__in=keys).values_list(
-            "idempotency_key", flat=True
-        )
+        NormalizedMetric.objects.filter(
+            customer=machine.customer, idempotency_key__in=keys
+        ).values_list("idempotency_key", flat=True)
     )
     seen = set(existing)
     insert_rows = []

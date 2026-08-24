@@ -21,7 +21,7 @@ $frontend = Start-Process -FilePath $node -ArgumentList $vite,'--host','127.0.0.
 $processes += @{ name='frontend'; id=$frontend.Id }
 $redisReady = Test-NetConnection -ComputerName '127.0.0.1' -Port 6379 -InformationLevel Quiet -WarningAction SilentlyContinue
 if ($redisReady) {
-  $worker = Start-Process -FilePath $python -ArgumentList '-m','celery','-A','config','worker','-l','INFO','--pool=solo' -WorkingDirectory (Join-Path $root 'backend') -WindowStyle Hidden -PassThru
+  $worker = Start-Process -FilePath $python -ArgumentList '-m','celery','-A','config','worker','-l','INFO','--pool=solo','-Q','celery,hyperv' -WorkingDirectory (Join-Path $root 'backend') -WindowStyle Hidden -PassThru
   $beat = Start-Process -FilePath $python -ArgumentList '-m','celery','-A','config','beat','-l','INFO' -WorkingDirectory (Join-Path $root 'backend') -WindowStyle Hidden -PassThru
   $processes += @{ name='worker'; id=$worker.Id }, @{ name='beat'; id=$beat.Id }
 } else { Write-Warning 'Redis indisponible : API/dashboard démarrés, workers Celery non lancés.' }

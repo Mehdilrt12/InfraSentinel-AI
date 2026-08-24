@@ -3,7 +3,7 @@
 ## Outils réellement utilisés
 
 - PowerShell non interactif.
-- Module Hyper-V : `Get-VM`, `Get-VMHost`, `Get-VMHardDiskDrive`, `Get-VHD`,
+- Module Hyper-V : `Get-VM`, `Get-VMHardDiskDrive`, `Get-VHD`,
   `Get-VMNetworkAdapterStatistics`.
 - CIM/WMI : `Win32_OperatingSystem`, `Win32_LogicalDisk`.
 - Performance Counters : Processor et Network Interface.
@@ -19,7 +19,10 @@ CPU, RAM, disque VHD, réseau, uptime et host. Les résultats JSON sont normalis
 historisés et transmis aux règles/ML. Timeout, retour non nul, JSON invalide et
 permissions insuffisantes déclenchent un état d'échec et retry Celery.
 
-Aucun host Hyper-V réel n'était disponible pendant la reconstruction; les tests
-d'intégration doivent être exécutés sur Windows Server avec le rôle Hyper-V et un
-compte lecture seule/administration déléguée approprié.
+Le poste de revue dispose de PowerShell, du module Hyper-V et du service VMMS. Une
+collecte réelle a été tentée contre l'hôte local `LEGION`; `Get-VM` a refusé
+l'accès faute de permissions Hyper-V. Aucune métrique réelle n'a donc été validée.
+La tâche ciblée est routée vers la queue `hyperv`, qui doit être consommée sur
+Windows; le worker Docker Linux ne consomme volontairement pas cette queue.
 
+`NOT TESTED — REAL HYPER-V ENVIRONMENT REQUIRED`

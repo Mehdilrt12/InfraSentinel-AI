@@ -1,6 +1,7 @@
 import secrets
 from django.contrib.auth.password_validation import validate_password
-from django.db import transaction
+from django.core.validators import validate_ipv46_address
+from django.db import IntegrityError, transaction
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils import timezone
 from django.utils.text import slugify
@@ -26,7 +27,8 @@ from inventory.services import authenticate_agent, create_enrollment_code, enrol
 from metrics.models import MetricAggregate, NormalizedMetric
 from metrics.services import ingest_metrics
 from ml_engine.models import MLModelVersion
-from ml_engine.tasks import train_model
+from ml_engine.predictive import analyze_machine_trends
+from ml_engine.tasks import evaluate_model, train_model
 from monitoring.models import Alert, Anomaly, AuditLog, MonitoringRule
 from notifications.models import NotificationDelivery, NotificationPreference
 from realtime.models import RealtimeEvent
@@ -98,6 +100,16 @@ class TenantViewSet(viewsets.ModelViewSet):
             target_id=str(instance.pk),
         )
 
+    def perform_destroy(self, instance):
+        AuditLog.objects.create(
+            customer=getattr(instance, "customer", self.request.user.customer),
+            actor=self.request.user,
+            action="DELETE",
+            target_type=instance._meta.label,
+            target_id=str(instance.pk),
+        )
+        instance.delete()
+
 
 class CustomerViewSet(viewsets.ModelViewSet):
     queryset = Customer.objects.all()
@@ -123,13 +135,32 @@ class EnvironmentViewSet(TenantViewSet):
     @action(detail=True, methods=["post"], permission_classes=[ReadOnlyUnlessManager])
     def enrollment_code(self, request, pk=None):
         environment = self.get_object()
-        raw = create_enrollment_code(
-            environment.customer, environment, int(request.data.get("ttl_minutes", 30))
+        try:
+            ttl_minutes = int(request.data.get("ttl_minutes", 30))
+        except (TypeError, ValueError):
+            raise serializers.ValidationError(
+                {"ttl_minutes": "Un nombre entier est attendu."}
+            )
+        if not 1 <= ttl_minutes <= 1440:
+            raise serializers.ValidationError(
+                {"ttl_minutes": "La durée doit être comprise entre 1 et 1440 minutes."}
+            )
+        try:
+            raw = create_enrollment_code(environment.customer, environment, ttl_minutes)
+        except ValueError as exc:
+            raise serializers.ValidationError({"environment": str(exc)}) from exc
+        AuditLog.objects.create(
+            customer=environment.customer,
+            actor=request.user,
+            action="AGENT_ENROLLMENT_CODE_CREATED",
+            target_type=environment._meta.label,
+            target_id=str(environment.pk),
+            context={"ttl_minutes": ttl_minutes},
         )
         return Response(
             {
                 "enrollment_code": raw,
-                "expires_in_minutes": int(request.data.get("ttl_minutes", 30)),
+                "expires_in_minutes": ttl_minutes,
             },
             status=201,
         )
@@ -138,6 +169,19 @@ class EnvironmentViewSet(TenantViewSet):
 class MachineViewSet(TenantViewSet):
     queryset = Machine.objects.select_related("environment").order_by("hostname")
     serializer_class = MachineSerializer
+
+    @action(detail=True, methods=["get"])
+    def trends(self, request, pk=None):
+        machine = self.get_object()
+        try:
+            hours = int(request.query_params.get("hours", 24))
+        except (TypeError, ValueError):
+            raise serializers.ValidationError({"hours": "Un entier est attendu."})
+        if not 1 <= hours <= 24 * 30:
+            raise serializers.ValidationError(
+                {"hours": "La fenêtre doit être comprise entre 1 et 720 heures."}
+            )
+        return Response(analyze_machine_trends(machine, hours=hours))
 
 
 class AgentViewSet(TenantViewSet):
@@ -157,6 +201,14 @@ class ConnectorViewSet(TenantViewSet):
             collect_vmware_connector.delay(str(connector.pk))
             if connector.kind == IntegrationEndpoint.Kind.VMWARE
             else collect_hyperv_connector.delay(str(connector.pk))
+        )
+        AuditLog.objects.create(
+            customer=connector.customer,
+            actor=_request.user,
+            action="CONNECTOR_COLLECTION_QUEUED",
+            target_type=connector._meta.label,
+            target_id=str(connector.pk),
+            context={"task_id": task.id, "kind": connector.kind},
         )
         return Response({"task_id": task.id, "status": "queued"}, status=202)
 
@@ -203,6 +255,14 @@ class RuleViewSet(TenantViewSet):
         rule = self.get_object()
         rule.enabled = not rule.enabled
         rule.save(update_fields=["enabled", "updated_at"])
+        AuditLog.objects.create(
+            customer=rule.customer,
+            actor=_request.user,
+            action="MONITORING_RULE_TOGGLED",
+            target_type=rule._meta.label,
+            target_id=str(rule.pk),
+            context={"enabled": rule.enabled},
+        )
         return Response(self.get_serializer(rule).data)
 
 
@@ -251,10 +311,55 @@ class MLModelViewSet(TenantViewSet):
 
     @action(detail=False, methods=["post"])
     def train(self, request):
+        if not request.user.customer_id:
+            return Response({"detail": "Un client est requis."}, status=403)
+        try:
+            days = int(request.data.get("days", 30))
+        except (TypeError, ValueError):
+            return Response({"detail": "Le nombre de jours est invalide."}, status=400)
+        if not 1 <= days <= 3650:
+            return Response(
+                {"detail": "Le nombre de jours doit être compris entre 1 et 3650."},
+                status=400,
+            )
         task = train_model.delay(
             str(request.user.customer_id),
-            int(request.data.get("days", 30)),
+            days,
             request.data.get("idempotency_key"),
+        )
+        AuditLog.objects.create(
+            customer=request.user.customer,
+            actor=request.user,
+            action="ML_TRAINING_QUEUED",
+            target_type="ml_engine.MLModelVersion",
+            context={"task_id": task.id, "days": days},
+        )
+        return Response({"task_id": task.id, "status": "queued"}, status=202)
+
+    @action(detail=False, methods=["post"])
+    def evaluate(self, request):
+        if not request.user.customer_id:
+            return Response({"detail": "Un client est requis."}, status=403)
+        try:
+            days = int(request.data.get("days", 30))
+        except (TypeError, ValueError):
+            return Response({"detail": "Le nombre de jours est invalide."}, status=400)
+        if not 1 <= days <= 3650:
+            return Response(
+                {"detail": "Le nombre de jours doit être compris entre 1 et 3650."},
+                status=400,
+            )
+        task = evaluate_model.delay(
+            str(request.user.customer_id),
+            days,
+            request.data.get("idempotency_key"),
+        )
+        AuditLog.objects.create(
+            customer=request.user.customer,
+            actor=request.user,
+            action="ML_EVALUATION_QUEUED",
+            target_type="ml_engine.MLModelVersion",
+            context={"task_id": task.id, "days": days},
         )
         return Response({"task_id": task.id, "status": "queued"}, status=202)
 
@@ -289,9 +394,12 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class TaskRunViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = TaskRun.objects.all()
+    queryset = TaskRun.objects.order_by("-started_at", "-pk")
     serializer_class = TaskRunSerializer
     permission_classes = [IsAdmin]
+
+    def get_queryset(self):
+        return tenant_queryset(self.request, self.queryset)
 
 
 class ReportViewSet(viewsets.ReadOnlyModelViewSet):
@@ -345,14 +453,17 @@ class RegisterView(APIView):
         slug = base
         while Customer.objects.filter(slug=slug).exists():
             slug = f"{base}-{secrets.token_hex(2)}"
-        customer = Customer.objects.create(name=organization, slug=slug)
-        user = User.objects.create_user(
-            username=email,
-            email=email,
-            password=password,
-            customer=customer,
-            role=User.Role.ADMIN,
-        )
+        try:
+            customer = Customer.objects.create(name=organization, slug=slug)
+            user = User.objects.create_user(
+                username=email,
+                email=email,
+                password=password,
+                customer=customer,
+                role=User.Role.ADMIN,
+            )
+        except IntegrityError:
+            return Response({"detail": "Cette adresse email existe déjà."}, status=400)
         environment = Environment.objects.create(
             customer=customer, name="Windows", kind=Environment.Kind.WINDOWS
         )
@@ -407,14 +518,30 @@ class AgentEnrollView(APIView):
     throttle_scope = "agent_ingest"
 
     def post(self, request):
+        external_id = str(request.data.get("external_id", "")).strip()
+        hostname = str(request.data.get("hostname", "")).strip()
+        version = str(request.data.get("version", "")).strip()
+        os_information = request.data.get("os_information") or {}
+        ip_address = request.data.get("ip_address")
+        if not external_id or len(external_id) > 255:
+            return Response({"detail": "Identité agent invalide."}, status=400)
+        if not hostname or len(hostname) > 255:
+            return Response({"detail": "Hostname agent invalide."}, status=400)
+        if len(version) > 40 or not isinstance(os_information, dict):
+            return Response({"detail": "Métadonnées agent invalides."}, status=400)
+        if ip_address:
+            try:
+                validate_ipv46_address(ip_address)
+            except DjangoValidationError:
+                return Response({"detail": "Adresse IP invalide."}, status=400)
         try:
             agent, token = enroll_agent(
                 request.data.get("enrollment_code", ""),
-                external_id=request.data["external_id"],
-                hostname=request.data["hostname"],
-                ip_address=request.data.get("ip_address"),
-                os_information=request.data.get("os_information"),
-                version=request.data.get("version", ""),
+                external_id=external_id,
+                hostname=hostname,
+                ip_address=ip_address,
+                os_information=os_information,
+                version=version,
             )
         except (KeyError, ValueError) as exc:
             return Response({"detail": str(exc)}, status=400)
@@ -454,6 +581,10 @@ class AgentHeartbeatView(APIView):
             last_seen=now,
             agent_version=request.data.get("version", agent.version),
         )
+        if not was_online:
+            from monitoring.alert_service import resolve_machine_alerts
+
+            resolve_machine_alerts(agent.machine, "MACHINE_OFFLINE")
         if not was_online:
             publish(
                 agent.customer,
@@ -512,9 +643,15 @@ class RealtimeTicketView(APIView):
 
 class RealtimeReplayView(APIView):
     def get(self, request):
+        try:
+            since = int(request.query_params.get("since", 0))
+            if since < 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            return Response({"detail": "Curseur de replay invalide."}, status=400)
         qs = (
             tenant_queryset(request, RealtimeEvent.objects.all())
-            .filter(sequence__gt=int(request.query_params.get("since", 0)))
+            .filter(sequence__gt=since)
             .order_by("sequence")[:500]
         )
         return Response(
@@ -548,5 +685,9 @@ class IntegrationOverviewView(APIView):
                     assets.filter(kind="HOST"), many=True
                 ).data,
                 "vms": VirtualAssetSerializer(assets.filter(kind="VM"), many=True).data,
+                "datastores": VirtualAssetSerializer(
+                    assets.filter(kind="DATASTORE"), many=True
+                ).data,
+                "partial": connectors.filter(last_error__gt="").exists(),
             }
         )

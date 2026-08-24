@@ -134,14 +134,18 @@ class VMwareCollector:
             self._metric("system.disk.free", free, "bytes", timestamp),
             self._metric(
                 "system.network.in",
-                self._perf_counter(content, host, "net.received.average"),
-                "KiB/s",
+                self._bytes_per_second(
+                    self._perf_counter(content, host, "net.received.average")
+                ),
+                "bytes/s",
                 timestamp,
             ),
             self._metric(
                 "system.network.out",
-                self._perf_counter(content, host, "net.transmitted.average"),
-                "KiB/s",
+                self._bytes_per_second(
+                    self._perf_counter(content, host, "net.transmitted.average")
+                ),
+                "bytes/s",
                 timestamp,
             ),
             self._metric("system.uptime", quick.uptime, "seconds", timestamp),
@@ -196,14 +200,18 @@ class VMwareCollector:
             ),
             self._metric(
                 "system.network.in",
-                self._perf_counter(content, vm, "net.received.average"),
-                "KiB/s",
+                self._bytes_per_second(
+                    self._perf_counter(content, vm, "net.received.average")
+                ),
+                "bytes/s",
                 timestamp,
             ),
             self._metric(
                 "system.network.out",
-                self._perf_counter(content, vm, "net.transmitted.average"),
-                "KiB/s",
+                self._bytes_per_second(
+                    self._perf_counter(content, vm, "net.transmitted.average")
+                ),
+                "bytes/s",
                 timestamp,
             ),
             self._metric("system.uptime", quick.uptimeSeconds, "seconds", timestamp),
@@ -227,6 +235,37 @@ class VMwareCollector:
             },
             "metrics": metrics,
         }
+
+    def _datastore(self, datastore, timestamp):
+        summary = datastore.summary
+        capacity = float(summary.capacity or 0)
+        free = float(summary.freeSpace or 0)
+        return {
+            "external_id": datastore._moId,
+            "kind": "DATASTORE",
+            "name": summary.name or datastore.name,
+            "state": "AVAILABLE" if summary.accessible else "UNAVAILABLE",
+            "parent_external_id": "",
+            "metadata": {
+                "url": summary.url or "",
+                "type": summary.type or "",
+                "accessible": bool(summary.accessible),
+                "multiple_host_access": bool(summary.multipleHostAccess),
+            },
+            "metrics": [
+                self._metric(
+                    "vmware.datastore.utilization",
+                    (capacity - free) / capacity * 100 if capacity else None,
+                    "%",
+                    timestamp,
+                ),
+                self._metric("system.disk.free", free, "bytes", timestamp),
+            ],
+        }
+
+    @staticmethod
+    def _bytes_per_second(value):
+        return None if value is None else value * 1024
 
     @staticmethod
     def _metric(name, value, unit, timestamp, status=""):
@@ -252,6 +291,15 @@ class VMwareCollector:
                 for vm in self._views(content, vim.VirtualMachine)
                 if vm.config is not None
             ]
-            return {"collected_at": timestamp, "hosts": hosts, "vms": vms}
+            datastores = [
+                self._datastore(datastore, timestamp)
+                for datastore in self._views(content, vim.Datastore)
+            ]
+            return {
+                "collected_at": timestamp,
+                "hosts": hosts,
+                "vms": vms,
+                "datastores": datastores,
+            }
         finally:
             self.close()

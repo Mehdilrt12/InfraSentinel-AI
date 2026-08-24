@@ -41,4 +41,10 @@ def generate_report(self, customer_id, kind="summary", idempotency_key=None):
         )
         return result
 
-    return run_once("reports.generate", key, self.request.id, work)
+    return run_once(
+        "reports.generate",
+        key,
+        self.request.id,
+        work,
+        customer_id=customer_id,
+    )

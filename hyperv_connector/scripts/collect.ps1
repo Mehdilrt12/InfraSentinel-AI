@@ -19,6 +19,9 @@ $collector = {
     $drives = @(Get-VMHardDiskDrive -VM $vm -ErrorAction SilentlyContinue | ForEach-Object { if(Test-Path $_.Path){ Get-VHD -Path $_.Path } })
     $diskAllocated = ($drives | Measure-Object FileSize -Sum).Sum
     $diskMaximum = ($drives | Measure-Object Size -Sum).Sum
+    $uptimeSeconds = [double]$vm.Uptime.TotalSeconds
+    $receivedBytes = [double](($adapters|Measure-Object ReceivedBytes -Sum).Sum)
+    $sentBytes = [double](($adapters|Measure-Object SentBytes -Sum).Sum)
     [ordered]@{
       external_id = $vm.VMId.ToString(); kind = 'VM'; name = $vm.Name; state = $vm.State.ToString()
       parent_external_id = $env:COMPUTERNAME
@@ -27,9 +30,9 @@ $collector = {
         @{metric_name='system.cpu.utilization';metric_value=[double]$vm.CPUUsage;unit='%';timestamp=$now;metadata=@{}},
         @{metric_name='system.memory.utilization';metric_value=if($vm.MemoryAssigned){[double]($vm.MemoryDemand/$vm.MemoryAssigned*100)}else{$null};unit='%';timestamp=$now;metadata=@{assigned_bytes=$vm.MemoryAssigned;demand_bytes=$vm.MemoryDemand}},
         @{metric_name='system.disk.utilization';metric_value=if($diskMaximum){[double]($diskAllocated/$diskMaximum*100)}else{$null};unit='%';timestamp=$now;metadata=@{}},
-        @{metric_name='system.network.in';metric_value=[double](($adapters|Measure-Object ReceivedBytes -Sum).Sum);unit='bytes';timestamp=$now;metadata=@{}},
-        @{metric_name='system.network.out';metric_value=[double](($adapters|Measure-Object SentBytes -Sum).Sum);unit='bytes';timestamp=$now;metadata=@{}},
-        @{metric_name='system.uptime';metric_value=[double]$vm.Uptime.TotalSeconds;unit='seconds';timestamp=$now;metadata=@{}},
+        @{metric_name='system.network.in';metric_value=if($uptimeSeconds){$receivedBytes/$uptimeSeconds}else{$null};unit='bytes/s';timestamp=$now;metadata=@{total_bytes=$receivedBytes;sampling='lifetime_average'}},
+        @{metric_name='system.network.out';metric_value=if($uptimeSeconds){$sentBytes/$uptimeSeconds}else{$null};unit='bytes/s';timestamp=$now;metadata=@{total_bytes=$sentBytes;sampling='lifetime_average'}},
+        @{metric_name='system.uptime';metric_value=$uptimeSeconds;unit='seconds';timestamp=$now;metadata=@{}},
         @{metric_name='virtual.machine.state';metric_value=if($vm.State -eq 'Running'){1}else{0};unit='state';status=$vm.State.ToString();timestamp=$now;metadata=@{}}
       )
     }
@@ -58,4 +61,3 @@ if($ComputerName -in @('.', 'localhost', '127.0.0.1', $env:COMPUTERNAME)) {
   $result = Invoke-Command -ComputerName $ComputerName -Credential $credential -ScriptBlock $collector
 }
 $result | ConvertTo-Json -Depth 12 -Compress
-

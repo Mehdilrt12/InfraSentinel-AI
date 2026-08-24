@@ -1,4 +1,5 @@
-from datetime import datetime, timezone as dt_timezone
+import math
+from datetime import datetime, timedelta, timezone as dt_timezone
 from django.core.exceptions import ValidationError
 from django.utils.dateparse import parse_datetime
 
@@ -53,7 +54,31 @@ def _timestamp(value):
     parsed = parse_datetime(str(value))
     if parsed is None:
         raise ValidationError({"timestamp": "Horodatage ISO-8601 invalide."})
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt_timezone.utc)
+    result = parsed if parsed.tzinfo else parsed.replace(tzinfo=dt_timezone.utc)
+    if result > datetime.now(dt_timezone.utc) + timedelta(minutes=5):
+        raise ValidationError(
+            {"timestamp": "Un horodatage situé dans le futur est refusé."}
+        )
+    return result
+
+
+def _canonical_value_unit(canonical, value, unit, metadata):
+    unit = str(unit or DEFAULT_UNITS.get(canonical, "")).strip()
+    if value is None:
+        return value, unit
+    rates = {
+        "system.disk.io.read",
+        "system.disk.io.write",
+        "system.network.in",
+        "system.network.out",
+    }
+    normalized_unit = unit.lower().replace(" ", "")
+    factors = {"kib/s": 1024, "mib/s": 1024**2, "gib/s": 1024**3}
+    if canonical in rates and normalized_unit in factors:
+        metadata.setdefault("original_unit", unit)
+        value *= factors[normalized_unit]
+        unit = "bytes/s"
+    return value, unit
 
 
 def normalize_metric(raw, *, source_type, environment, machine, customer):
@@ -61,6 +86,10 @@ def normalize_metric(raw, *, source_type, environment, machine, customer):
     if not raw_name:
         raise ValidationError({"metric_name": "Ce champ est obligatoire."})
     canonical = ALIASES.get(raw_name.lower(), raw_name.lower().replace(" ", "."))
+    if len(canonical) > 120:
+        raise ValidationError(
+            {"metric_name": "Le nom normalisé dépasse 120 caractères."}
+        )
     value = raw.get("metric_value", raw.get("value"))
     if value is not None:
         try:
@@ -69,9 +98,22 @@ def normalize_metric(raw, *, source_type, environment, machine, customer):
             raise ValidationError(
                 {"metric_value": "Une valeur numérique est attendue."}
             ) from exc
-    metadata = dict(raw.get("metadata") or {})
+        if not math.isfinite(value):
+            raise ValidationError(
+                {"metric_value": "La valeur doit être un nombre fini."}
+            )
+    raw_metadata = raw.get("metadata") or {}
+    if not isinstance(raw_metadata, dict):
+        raise ValidationError({"metadata": "Un objet JSON est attendu."})
+    metadata = dict(raw_metadata)
     metadata.setdefault("raw_metric_name", raw_name)
     metadata.setdefault("normalizer_version", "2.0")
+    value, unit = _canonical_value_unit(canonical, value, raw.get("unit"), metadata)
+    idempotency_key = raw.get("idempotency_key") or None
+    if idempotency_key is not None and len(str(idempotency_key)) > 128:
+        raise ValidationError(
+            {"idempotency_key": "La clé ne peut pas dépasser 128 caractères."}
+        )
     return {
         "timestamp": _timestamp(raw.get("timestamp")),
         "customer": customer,
@@ -80,10 +122,10 @@ def normalize_metric(raw, *, source_type, environment, machine, customer):
         "source_type": source_type,
         "metric_name": canonical,
         "metric_value": value,
-        "unit": str(raw.get("unit") or DEFAULT_UNITS.get(canonical, ""))[:32],
+        "unit": unit[:32],
         "status": str(raw.get("status") or "")[:32],
         "metadata": metadata,
-        "idempotency_key": raw.get("idempotency_key") or None,
+        "idempotency_key": idempotency_key,
     }
 
 

@@ -10,7 +10,10 @@ rejoint uniquement `tenant_<uuid>` et rejoue au maximum 500 événements depuis 
 dernier numéro de séquence. Plusieurs clients reçoivent le même groupe; une
 déconnexion n'affecte pas les autres.
 
-Le frontend reconnecte avec backoff exponentiel. En cas d'échec il conserve un
-polling de secours toutes les 30 secondes. Les événements perdus sont rejoués depuis
+Le curseur frontend est stocké en session avec une clé propre au client, empêchant
+un changement de tenant de réutiliser une séquence étrangère. Le frontend empêche
+les doubles connexions, reconnecte avec backoff exponentiel et arrête timers/socket
+à la destruction. En cas d'échec il conserve un polling de secours toutes les 30
+secondes. Les événements perdus sont rejoués depuis
 PostgreSQL. Les tests ASGI couvrent connexion, reconnexion avec replay, plusieurs
 clients, déconnexion indépendante, curseur invalide et rejet d'un ticket invalide.

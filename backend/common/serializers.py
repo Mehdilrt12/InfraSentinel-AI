@@ -1,3 +1,5 @@
+import re
+from urllib.parse import urlparse
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 from accounts.models import Customer, User
@@ -93,6 +95,23 @@ class MachineSerializer(TenantRelationSerializer):
         exclude = ["customer"]
         read_only_fields = ["id", "created_at", "updated_at", "last_seen"]
 
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        environment = attrs.get("environment") or getattr(
+            self.instance, "environment", None
+        )
+        source_type = attrs.get("source_type") or getattr(
+            self.instance, "source_type", None
+        )
+        if environment and environment.kind not in {
+            source_type,
+            Environment.Kind.MIXED,
+        }:
+            raise serializers.ValidationError(
+                {"source_type": "La source ne correspond pas à l'environnement."}
+            )
+        return attrs
+
 
 class AgentSerializer(serializers.ModelSerializer):
     hostname = serializers.CharField(source="machine.hostname", read_only=True)
@@ -111,6 +130,66 @@ class ConnectorSerializer(TenantRelationSerializer):
         exclude = ["customer"]
         extra_kwargs = {"secret_ref": {"write_only": True}}
         read_only_fields = ["id", "last_sync_at", "last_error", "created_at"]
+
+    def validate_secret_ref(self, value):
+        value = value.strip().upper()
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{7,254}", value):
+            raise serializers.ValidationError(
+                "Référence invalide; utilisez uniquement une variable d'environnement dédiée."
+            )
+        user = self.context["request"].user
+        allowed = ("INFRASENTINEL_CONNECTOR_", "INFRASENTINEL_CUSTOMER_")
+        if user.is_superuser:
+            if not value.startswith(allowed):
+                raise serializers.ValidationError(
+                    "La variable doit utiliser un préfixe InfraSentinel dédié."
+                )
+        else:
+            expected = f"INFRASENTINEL_CUSTOMER_{user.customer_id.hex.upper()}_"
+            if not value.startswith(expected):
+                raise serializers.ValidationError(
+                    f"La variable doit commencer par {expected}."
+                )
+        return value
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        kind = attrs.get("kind") or getattr(self.instance, "kind", None)
+        environment = attrs.get("environment") or getattr(
+            self.instance, "environment", None
+        )
+        endpoint = str(
+            attrs.get("endpoint") or getattr(self.instance, "endpoint", "")
+        ).strip()
+        timeout = attrs.get(
+            "timeout_seconds", getattr(self.instance, "timeout_seconds", 30)
+        )
+        if environment and environment.kind not in {kind, Environment.Kind.MIXED}:
+            raise serializers.ValidationError(
+                {
+                    "environment": "Le type d'environnement ne correspond pas au connecteur."
+                }
+            )
+        if not 1 <= timeout <= 300:
+            raise serializers.ValidationError(
+                {
+                    "timeout_seconds": "Le timeout doit être compris entre 1 et 300 secondes."
+                }
+            )
+        if kind == IntegrationEndpoint.Kind.VMWARE:
+            parsed = urlparse(endpoint)
+            if parsed.scheme != "https" or not parsed.hostname:
+                raise serializers.ValidationError(
+                    {"endpoint": "Une URL vCenter HTTPS complète est obligatoire."}
+                )
+        elif kind == IntegrationEndpoint.Kind.HYPERV and (
+            not endpoint or "://" in endpoint
+        ):
+            raise serializers.ValidationError(
+                {"endpoint": "Utilisez un nom DNS ou une adresse d'hôte Hyper-V."}
+            )
+        attrs["endpoint"] = endpoint
+        return attrs
 
 
 class VirtualAssetSerializer(serializers.ModelSerializer):
@@ -149,6 +228,27 @@ class RuleSerializer(TenantRelationSerializer):
         model = MonitoringRule
         exclude = ["customer"]
         read_only_fields = ["id", "created_at", "updated_at"]
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        environment = attrs.get("environment") or getattr(
+            self.instance, "environment", None
+        )
+        machine = attrs.get("machine") or getattr(self.instance, "machine", None)
+        metric = attrs.get("metric") or getattr(self.instance, "metric", "")
+        operator = attrs.get("operator") or getattr(self.instance, "operator", "")
+        threshold = attrs.get("threshold", getattr(self.instance, "threshold", None))
+        if machine and environment and machine.environment_id != environment.pk:
+            raise serializers.ValidationError(
+                {"machine": "La machine n'appartient pas à cet environnement."}
+            )
+        if metric == "machine.online" and not (operator == "==" and threshold == 0):
+            raise serializers.ValidationError(
+                {
+                    "metric": "Une règle offline doit utiliser machine.online == 0; la durée porte le délai d'indisponibilité."
+                }
+            )
+        return attrs
 
 
 class RecommendationSerializer(serializers.ModelSerializer):
@@ -205,7 +305,7 @@ class MLModelSerializer(serializers.ModelSerializer):
         read_only_fields = [
             field.name
             for field in MLModelVersion._meta.fields
-            if field.name not in {"active", "customer", "artifact_path"}
+            if field.name not in {"customer", "artifact_path"}
         ]
 
 

@@ -49,7 +49,8 @@ et workers indépendants.
 ## Déploiement
 
 Daphne sert HTTP/ASGI, un ou plusieurs workers Celery consomment Redis, un processus
-Celery Beat planifie les travaux, PostgreSQL conserve l'état. Le frontend Vite est
-compilé puis servi par un serveur statique/reverse proxy. TLS se termine au proxy
-ou sur les endpoints configurés.
-
+Celery Beat planifie les travaux, PostgreSQL conserve l'état. La queue `hyperv`
+doit impérativement être consommée par un worker Windows disposant de PowerShell,
+du module Hyper-V et des droits nécessaires; le worker Linux du compose consomme
+uniquement `celery`. Le frontend Vite est compilé puis servi par un serveur
+statique/reverse proxy. TLS se termine au proxy ou sur les endpoints configurés.

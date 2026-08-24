@@ -62,6 +62,7 @@ class RuleState(models.Model):
     machine = models.ForeignKey(
         Machine, on_delete=models.CASCADE, related_name="rule_states"
     )
+    dimension_key = models.CharField(max_length=255, blank=True, default="")
     first_true_at = models.DateTimeField(null=True, blank=True)
     last_evaluated_at = models.DateTimeField(null=True, blank=True)
     last_value = models.FloatField(null=True, blank=True)
@@ -70,7 +71,8 @@ class RuleState(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["rule", "machine"], name="uniq_rule_machine_state"
+                fields=["rule", "machine", "dimension_key"],
+                name="uniq_rule_machine_dimension_state",
             )
         ]
 
@@ -137,6 +139,7 @@ class Anomaly(models.Model):
         related_name="anomalies",
     )
     detected_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    window_start = models.DateTimeField(null=True, blank=True, db_index=True)
     score = models.FloatField()
     threshold = models.FloatField()
     model_version = models.CharField(max_length=80)
@@ -144,6 +147,13 @@ class Anomaly(models.Model):
     acknowledged = models.BooleanField(default=False)
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["customer", "machine", "model_version", "window_start"],
+                condition=models.Q(window_start__isnull=False),
+                name="uniq_anomaly_model_machine_window",
+            )
+        ]
         indexes = [
             models.Index(fields=["customer", "detected_at"]),
             models.Index(fields=["machine", "detected_at"]),

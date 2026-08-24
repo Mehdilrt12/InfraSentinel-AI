@@ -3,7 +3,7 @@ import secrets
 from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
-from .models import Agent, EnrollmentCode, Machine
+from .models import Agent, EnrollmentCode, Environment, Machine
 
 
 def _hash(value):
@@ -11,6 +11,14 @@ def _hash(value):
 
 
 def create_enrollment_code(customer, environment, ttl_minutes=30):
+    if environment.customer_id != customer.pk:
+        raise ValueError("L'environnement appartient à un autre client.")
+    if environment.kind not in {Environment.Kind.WINDOWS, Environment.Kind.MIXED}:
+        raise ValueError(
+            "L'enrollment Windows exige un environnement Windows ou mixte."
+        )
+    if not 1 <= ttl_minutes <= 1440:
+        raise ValueError("Durée d'enrollment invalide.")
     raw = secrets.token_urlsafe(32)
     EnrollmentCode.objects.create(
         customer=customer,
@@ -35,7 +43,7 @@ def enroll_agent(
         raise ValueError("Code d'enrollment invalide ou expiré.")
     machine, _ = Machine.objects.update_or_create(
         customer=enrollment.customer,
-        source_type=Machine._meta.get_field("source_type").choices[0][0],
+        source_type=Environment.Kind.WINDOWS,
         external_id=external_id,
         defaults={
             "environment": enrollment.environment,

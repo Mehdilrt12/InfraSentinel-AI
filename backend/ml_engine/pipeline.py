@@ -1,5 +1,6 @@
 import json
 import os
+import uuid
 from datetime import timedelta
 from pathlib import Path
 import joblib
@@ -32,7 +33,7 @@ PARAMETERS = {
     "random_state": 42,
     "n_jobs": -1,
 }
-MODEL_DIR = Path(settings.BASE_DIR) / "model_store"
+MODEL_DIR = Path(settings.ML_MODEL_DIR)
 
 
 def dataset_for(customer, *, days=30):
@@ -63,6 +64,9 @@ def train_customer_model(customer_id, *, days=30):
     data = dataset_for(customer, days=days)
     if len(data) < 20:
         raise ValueError("Au moins 20 fenêtres de métriques réelles sont requises.")
+    split = max(1, min(len(data) - 1, int(len(data) * 0.8)))
+    training_data = data.iloc[:split]
+    validation_data = data.iloc[split:]
     pipeline = Pipeline(
         [
             ("imputer", SimpleImputer(strategy="median")),
@@ -70,10 +74,13 @@ def train_customer_model(customer_id, *, days=30):
             ("model", IsolationForest(**PARAMETERS)),
         ]
     )
-    pipeline.fit(data)
-    scores = -pipeline.decision_function(data)
-    threshold = float(np.quantile(scores, 1 - PARAMETERS["contamination"]))
-    version_name = timezone.now().strftime("iforest-%Y%m%dT%H%M%SZ")
+    pipeline.fit(training_data)
+    training_scores = -pipeline.decision_function(training_data)
+    validation_scores = -pipeline.decision_function(validation_data)
+    threshold = float(np.quantile(training_scores, 1 - PARAMETERS["contamination"]))
+    version_name = (
+        timezone.now().strftime("iforest-%Y%m%dT%H%M%S") + f"-{uuid.uuid4().hex[:8]}"
+    )
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     target = MODEL_DIR / f"{customer.pk}-{version_name}.joblib"
     temporary = target.with_suffix(".tmp")
@@ -81,38 +88,52 @@ def train_customer_model(customer_id, *, days=30):
     os.replace(temporary, target)
     metadata = {
         "rows": len(data),
+        "training_rows": len(training_data),
+        "validation_rows": len(validation_data),
         "from": data.index.get_level_values("bucket").min().isoformat(),
         "to": data.index.get_level_values("bucket").max().isoformat(),
         "source": "NormalizedMetric",
         "synthetic": False,
     }
     evaluation = {
-        "anomaly_rate": float((scores >= threshold).mean()),
-        "mean_anomaly_score": float(scores.mean()),
-        "score_std": float(scores.std()),
+        "method": "chronological_holdout",
+        "ground_truth_available": False,
+        "precision": None,
+        "recall": None,
+        "training_anomaly_rate": float((training_scores >= threshold).mean()),
+        "validation_anomaly_rate": float((validation_scores >= threshold).mean()),
+        "validation_score_mean": float(validation_scores.mean()),
+        "validation_score_std": float(validation_scores.std()),
+        "validation_score_p95": float(np.quantile(validation_scores, 0.95)),
     }
-    with transaction.atomic():
-        MLModelVersion.objects.filter(customer=customer, active=True).update(
-            active=False
-        )
-        model = MLModelVersion.objects.create(
-            customer=customer,
-            version=version_name,
-            features=FEATURES,
-            preprocessing={
-                "imputer": "median",
-                "scaler": "RobustScaler",
-                "window": "5min",
-            },
-            parameters=PARAMETERS,
-            dataset=metadata,
-            evaluation_metrics=evaluation,
-            decision_threshold=threshold,
-            artifact_path=str(target),
-            trained_at=timezone.now(),
-            status=MLModelVersion.Status.READY,
-            active=True,
-        )
+    try:
+        with transaction.atomic():
+            customer = Customer.objects.select_for_update().get(pk=customer_id)
+            MLModelVersion.objects.filter(customer=customer, active=True).update(
+                active=False
+            )
+            model = MLModelVersion.objects.create(
+                customer=customer,
+                version=version_name,
+                features=FEATURES,
+                preprocessing={
+                    "imputer": "median",
+                    "scaler": "RobustScaler",
+                    "window": "5min",
+                    "split": "chronological_80_20",
+                },
+                parameters=PARAMETERS,
+                dataset=metadata,
+                evaluation_metrics=evaluation,
+                decision_threshold=threshold,
+                artifact_path=target.name,
+                trained_at=timezone.now(),
+                status=MLModelVersion.Status.READY,
+                active=True,
+            )
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
     return {
         "model_id": str(model.pk),
         "version": version_name,
@@ -135,17 +156,20 @@ def infer_customer(customer_id, *, days=1):
     data = dataset_for(customer, days=days)
     if data.empty:
         return {"anomalies": 0, "reason": "no_recent_data"}
-    pipeline = joblib.load(model_version.artifact_path)
+    artifact = Path(model_version.artifact_path)
+    if not artifact.is_absolute():
+        artifact = MODEL_DIR / artifact.name
+    if not artifact.is_file():
+        return {
+            "anomalies": 0,
+            "reason": "model_artifact_missing",
+            "model_version": model_version.version,
+        }
+    pipeline = joblib.load(artifact)
     scores = -pipeline.decision_function(data)
     created = 0
     for (machine_id, bucket), score in zip(data.index, scores, strict=True):
         if float(score) < model_version.decision_threshold:
-            continue
-        if Anomaly.objects.filter(
-            machine_id=machine_id,
-            model_version=model_version.version,
-            detected_at__gte=bucket,
-        ).exists():
             continue
         explanation = {
             "features": {
@@ -155,14 +179,19 @@ def infer_customer(customer_id, *, days=1):
             "method": "Isolation Forest decision_function",
             "synthetic": False,
         }
-        anomaly = Anomaly.objects.create(
+        anomaly, anomaly_created = Anomaly.objects.get_or_create(
             customer=customer,
             machine_id=machine_id,
-            score=float(score),
-            threshold=model_version.decision_threshold,
             model_version=model_version.version,
-            explanation=explanation,
+            window_start=bucket.to_pydatetime(),
+            defaults={
+                "score": float(score),
+                "threshold": model_version.decision_threshold,
+                "explanation": explanation,
+            },
         )
+        if not anomaly_created:
+            continue
         create_or_update_alert(
             machine=anomaly.machine,
             alert_type="ML_ANOMALY",

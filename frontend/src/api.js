@@ -16,6 +16,7 @@ api.interceptors.response.use((response) => response, async (error) => {
   original._retried = true
   refreshPromise ||= axios.post(`${API_URL}/auth/refresh/`, { refresh: localStorage.getItem('refresh_token') })
     .then(({ data }) => { localStorage.setItem('access_token', data.access); if (data.refresh) localStorage.setItem('refresh_token', data.refresh); return data.access })
+    .catch((refreshError) => { localStorage.removeItem('access_token'); localStorage.removeItem('refresh_token'); throw refreshError })
     .finally(() => { refreshPromise = null })
   const token = await refreshPromise
   original.headers.Authorization = `Bearer ${token}`
@@ -23,4 +24,3 @@ api.interceptors.response.use((response) => response, async (error) => {
 })
 
 export const listData = (data) => Array.isArray(data) ? data : (data?.results || [])
-

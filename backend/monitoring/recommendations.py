@@ -76,7 +76,35 @@ def build_recommendation(metric_name, context=None):
             ],
         ),
     )
-    source = (context or {}).get("source_type", "source supervisée")
+    context = context or {}
+    source = context.get("source_type", "source supervisée")
+    resource_kind = (context.get("metric_metadata") or {}).get("resource_kind")
+    hints = list(hints)
+    actions = list(actions)
+    if (
+        source == "VMWARE"
+        and resource_kind == "HOST"
+        and metric_name
+        in {
+            "system.cpu.utilization",
+            "system.memory.utilization",
+        }
+    ):
+        hints.append("Identifier les VM qui contribuent le plus à la charge de l'hôte")
+        actions.append("Évaluer une redistribution contrôlée des workloads entre hôtes")
+    if (
+        source == "HYPERV"
+        and resource_kind == "HOST"
+        and metric_name
+        in {
+            "system.cpu.utilization",
+            "system.memory.utilization",
+        }
+    ):
+        hints.append("Comparer les allocations des VM à la capacité physique de l'hôte")
+        actions.append(
+            "Rééquilibrer les allocations uniquement après validation de capacité"
+        )
     return {
         "diagnosis_hints": hints,
         "actions": actions,

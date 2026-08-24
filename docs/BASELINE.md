@@ -4,11 +4,13 @@ Date : 24 août 2026 — version reconstruite `2.0.0`.
 
 ## Contexte
 
-La copie de travail antérieure a disparu du disque avant la phase 17. La Corbeille,
-les autres volumes et les dépôts Git accessibles ont été vérifiés sans trouver de
-copie restaurable. La révision d'origine connue était `845f8d7` sur `main`.
-La présente baseline décrit exclusivement la reconstruction vérifiable contenue
-dans ce dépôt; elle ne prétend pas restaurer octet pour octet l'ancien dépôt.
+La copie de travail antérieure a disparu du disque avant la phase 17. Aucun remote,
+commit ou reflog du dépôt d'origine n'est présent dans cette copie. L'identifiant
+`845f8d7`, mentionné pendant la reconstruction, n'est pas résolvable localement et
+ne peut donc servir de preuve de comparaison. Un arbre Git orphelin
+`66c15d7b1b0592ca02f91328761e702e5d6bd080` correspond exactement aux 154 fichiers
+de la baseline reconstruite. Il a été rattaché à `main` par le commit local
+`b3ed951`. La présente baseline ne prétend pas restaurer l'historique GitHub perdu.
 
 ## Architecture actuelle
 
@@ -19,7 +21,7 @@ dans ce dépôt; elle ne prétend pas restaurer octet pour octet l'ancien dépô
 - `hyperv_connector/` : exécuteur Python et un script PowerShell centralisé.
 - `scripts/` : installation, lancement, arrêt, statut et validation.
 - `docs/` : architecture et procédures par domaine.
-- `backend/*/tests.py` et `agent/tests/` : tests unitaires et sécurité.
+- `backend/common/test*.py` et `agent/tests/` : tests unitaires, intégration et sécurité.
 
 ## Technologies réellement utilisées
 
@@ -80,4 +82,3 @@ docker compose up -d db redis
 ./scripts/test-all.ps1
 ./scripts/start-local.ps1
 ```
-

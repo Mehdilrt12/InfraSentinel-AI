@@ -18,7 +18,8 @@ optionnels. Les alertes et anomalies appartiennent toujours à une machine/clien
 - UUID pour les identités distribuées; bigint pour métriques/événements séquentiels.
 - `JSONField` pour métadonnées spécifiques sans perdre vSphere/Hyper-V/Windows.
 - contraintes uniques sur identités externes, enrollment hash, agent token hash,
-  version ML, préférences, agrégats et clés d'idempotence.
+  version/unique modèle ML actif, fenêtres d'anomalie, états de règle dimensionnés,
+  préférences, agrégats et clés d'idempotence.
 - index temporels et composites machine/métrique/date, tenant/statut/sévérité et
   connecteur/type.
 - timestamps timezone-aware.
@@ -56,7 +57,7 @@ et appliquer une rétention documentée.
 ## Validation de la reconstruction
 
 Le 24 août 2026, toutes les migrations ont été appliquées sur une base PostgreSQL
-17 vierge, y compris les contraintes partielles de déduplication des alertes et
-notifications. La suite backend a ensuite réussi 21 tests sur cette base; la base
-de validation isolée a été supprimée après le contrôle, sans toucher à la base
-applicative.
+17 vierge, y compris les contraintes partielles de déduplication des alertes, le
+blacklist JWT et les contraintes ML/règles. La suite backend a ensuite réussi
+48 tests sur PostgreSQL. La base de test Django est supprimée automatiquement
+après le contrôle, sans toucher à la base applicative.

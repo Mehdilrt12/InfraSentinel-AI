@@ -20,12 +20,17 @@ class NormalizedMetric(models.Model):
     unit = models.CharField(max_length=32, blank=True)
     status = models.CharField(max_length=32, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
-    idempotency_key = models.CharField(
-        max_length=128, unique=True, null=True, blank=True
-    )
+    idempotency_key = models.CharField(max_length=128, null=True, blank=True)
     received_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["customer", "idempotency_key"],
+                condition=models.Q(idempotency_key__isnull=False),
+                name="uniq_metric_customer_idempotency",
+            )
+        ]
         indexes = [
             models.Index(fields=["customer", "timestamp"]),
             models.Index(fields=["machine", "metric_name", "timestamp"]),

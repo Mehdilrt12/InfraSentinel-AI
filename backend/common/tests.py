@@ -152,6 +152,18 @@ class NormalizationTests(BaseData):
             ingest_metrics(machine=self.machine, source_type="WINDOWS", items=[item]), 0
         )
 
+    def test_idempotency_key_is_scoped_by_customer(self):
+        item = {"metric_name": "cpu", "metric_value": 10, "idempotency_key": "shared"}
+        self.assertEqual(
+            ingest_metrics(machine=self.machine, source_type="WINDOWS", items=[item]), 1
+        )
+        self.assertEqual(
+            ingest_metrics(
+                machine=self.other_machine, source_type="WINDOWS", items=[item]
+            ),
+            1,
+        )
+
 
 class RuleAndAlertTests(BaseData):
     def _metric(self, timestamp, value):
@@ -182,6 +194,22 @@ class RuleAndAlertTests(BaseData):
         evaluate_metric(self._metric(start + timedelta(seconds=301), 96))
         self.assertEqual(Alert.objects.count(), 1)
         self.assertTrue(RuleState.objects.get(rule=rule, machine=self.machine).active)
+
+    def test_same_metric_is_not_reprocessed_by_periodic_scan(self):
+        MonitoringRule.objects.create(
+            customer=self.customer,
+            name="CPU immédiat",
+            metric="system.cpu.utilization",
+            operator=">",
+            threshold=90,
+            duration_seconds=0,
+            severity="WARNING",
+            cooldown_seconds=0,
+        )
+        metric = self._metric(timezone.now(), 95)
+        evaluate_metric(metric)
+        evaluate_metric(metric)
+        self.assertEqual(Alert.objects.get().occurrences, 1)
 
     def test_alerts_are_deduplicated_and_recommended(self):
         first, created = create_or_update_alert(
@@ -253,6 +281,27 @@ class AsyncIdempotencyTests(TestCase):
             stale_after_seconds=10,
         )
         self.assertTrue(result["recovered"])
+
+    def test_same_key_is_isolated_between_customers(self):
+        first = Customer.objects.create(name="Task Alpha", slug="task-alpha")
+        second = Customer.objects.create(name="Task Beta", slug="task-beta")
+        one = run_once(
+            "test.tenant",
+            "same-key",
+            "one",
+            lambda: {"tenant": "alpha"},
+            customer_id=first.pk,
+        )
+        two = run_once(
+            "test.tenant",
+            "same-key",
+            "two",
+            lambda: {"tenant": "beta"},
+            customer_id=second.pk,
+        )
+        self.assertFalse(one["duplicate"])
+        self.assertFalse(two["duplicate"])
+        self.assertEqual(TaskRun.objects.filter(task_name="test.tenant").count(), 2)
 
 
 @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")

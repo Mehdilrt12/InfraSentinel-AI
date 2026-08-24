@@ -22,7 +22,8 @@ utilisée car sa version disponible est incompatible avec Django 6.
 
 ## Idempotence et reprise
 
-`TaskRun(task_name,idempotency_key)` possède une contrainte unique. SUCCESS renvoie
+`TaskRun(task_name,idempotency_key)` possède une contrainte unique et un rattachement
+tenant exposé uniquement à son client. SUCCESS renvoie
 le résultat antérieur; RUNNING récent évite le doublon; RUNNING dépassant le délai
 est repris après crash worker; FAILED peut être réessayé. Les métriques connecteurs
 portent aussi une clé unique par ressource/collecte/mesure. Les tâches externes ont
@@ -37,8 +38,8 @@ logging Django sans inclure les secrets.
 ./.venv/Scripts/python.exe backend/manage.py shell -c "from metrics.tasks import aggregate_history; print(aggregate_history.delay().id)"
 ```
 
-Sous Windows, `--pool=solo` est recommandé en local. En production Linux, utiliser
-prefork et plusieurs workers/queues (`default`, `notifications`, `collectors`,
-`ml`). Les tests couvrent exécution, duplication, échec/retry, tâche RUNNING stale
-après restart et collecteur mocké.
-
+Sous Windows, `--pool=solo` est recommandé en local. Le lanceur consomme `celery`
+et `hyperv`. En production Linux, le worker consomme uniquement `celery`; un worker
+Windows séparé doit consommer `hyperv` avec `-Q hyperv`. Les tests couvrent
+exécution, duplication, échec/retry, tâche RUNNING stale après restart, isolation
+tenant, collecteur mocké et concurrence PostgreSQL.

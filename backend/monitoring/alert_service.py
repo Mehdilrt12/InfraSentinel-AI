@@ -1,6 +1,7 @@
 import hashlib
 from django.db import transaction
 from django.utils import timezone
+from inventory.models import Machine
 from .models import Alert, Recommendation
 from .recommendations import build_recommendation
 
@@ -25,6 +26,7 @@ def create_or_update_alert(
     source_key="",
     cooldown_seconds=0,
 ):
+    Machine.objects.select_for_update().only("pk").get(pk=machine.pk)
     dedup_key = _dedup(machine, alert_type, source_key or alert_type)
     alert = (
         Alert.objects.select_for_update()
@@ -99,3 +101,87 @@ def create_or_update_alert(
             )
         )
     return alert, created
+
+
+@transaction.atomic
+def resolve_open_alert(machine, alert_type, source_key, reason="condition_cleared"):
+    Machine.objects.select_for_update().only("pk").get(pk=machine.pk)
+    dedup_key = _dedup(machine, alert_type, source_key or alert_type)
+    alert = (
+        Alert.objects.select_for_update()
+        .filter(
+            customer=machine.customer,
+            dedup_key=dedup_key,
+        )
+        .exclude(status=Alert.Status.RESOLVED)
+        .first()
+    )
+    if not alert:
+        return None
+    alert.status = Alert.Status.RESOLVED
+    alert.last_seen_at = timezone.now()
+    alert.context = {**alert.context, "resolution_reason": reason}
+    alert.save(update_fields=["status", "last_seen_at", "context", "updated_at"])
+    from realtime.publisher import publish
+
+    publish(
+        machine.customer,
+        "alert.updated",
+        {
+            "id": str(alert.pk),
+            "machine_id": str(machine.pk),
+            "severity": alert.severity,
+            "status": alert.status,
+            "message": alert.message,
+            "occurrences": alert.occurrences,
+        },
+        alert.pk,
+    )
+    return alert
+
+
+def resolve_machine_alerts(machine, alert_type, reason="machine_recovered"):
+    alerts = list(
+        Alert.objects.filter(
+            customer=machine.customer,
+            machine=machine,
+            type=alert_type,
+        )
+        .exclude(status=Alert.Status.RESOLVED)
+        .values_list("dedup_key", flat=True)
+    )
+    resolved = 0
+    for dedup_key in alerts:
+        alert = (
+            Alert.objects.filter(
+                customer=machine.customer,
+                machine=machine,
+                dedup_key=dedup_key,
+            )
+            .exclude(status=Alert.Status.RESOLVED)
+            .first()
+        )
+        if alert:
+            alert.status = Alert.Status.RESOLVED
+            alert.last_seen_at = timezone.now()
+            alert.context = {**alert.context, "resolution_reason": reason}
+            alert.save(
+                update_fields=["status", "last_seen_at", "context", "updated_at"]
+            )
+            from realtime.publisher import publish
+
+            publish(
+                machine.customer,
+                "alert.updated",
+                {
+                    "id": str(alert.pk),
+                    "machine_id": str(machine.pk),
+                    "severity": alert.severity,
+                    "status": alert.status,
+                    "message": alert.message,
+                    "occurrences": alert.occurrences,
+                },
+                alert.pk,
+            )
+            resolved += 1
+    return resolved

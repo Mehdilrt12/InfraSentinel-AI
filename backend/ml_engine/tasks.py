@@ -2,6 +2,7 @@ from datetime import datetime, timezone as dt_timezone
 from celery import shared_task
 from accounts.models import Customer
 from async_tasks.idempotency import run_once
+from .evaluation import evaluate_detection_strategies
 from .pipeline import infer_customer, train_customer_model
 
 
@@ -20,6 +21,7 @@ def train_model(self, customer_id, days=30, idempotency_key=None):
         key,
         self.request.id,
         lambda: train_customer_model(customer_id, days=days),
+        customer_id=customer_id,
     )
 
 
@@ -38,6 +40,29 @@ def analyze_customer(self, customer_id, idempotency_key=None):
         idempotency_key or f"{customer_id}:{bucket}",
         self.request.id,
         lambda: infer_customer(customer_id),
+        customer_id=customer_id,
+    )
+
+
+@shared_task(
+    bind=True,
+    name="ml.evaluate",
+    autoretry_for=(OSError,),
+    retry_backoff=True,
+    retry_jitter=True,
+    max_retries=3,
+)
+def evaluate_model(self, customer_id, days=30, idempotency_key=None):
+    key = (
+        idempotency_key
+        or f"{customer_id}:{days}:{datetime.now(dt_timezone.utc):%Y-%m-%d}"
+    )
+    return run_once(
+        "ml.evaluate",
+        key,
+        self.request.id,
+        lambda: evaluate_detection_strategies(customer_id, days=days),
+        customer_id=customer_id,
     )
 
 

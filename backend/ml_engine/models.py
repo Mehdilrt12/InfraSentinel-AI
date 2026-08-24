@@ -34,5 +34,10 @@ class MLModelVersion(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=["customer", "version"], name="uniq_ml_customer_version"
-            )
+            ),
+            models.UniqueConstraint(
+                fields=["customer"],
+                condition=models.Q(active=True),
+                name="uniq_active_ml_model_customer",
+            ),
         ]

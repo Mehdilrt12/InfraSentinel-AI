@@ -19,5 +19,6 @@ class CollectionRun(models.Model):
     finished_at = models.DateTimeField(null=True, blank=True)
     discovered_hosts = models.PositiveIntegerField(default=0)
     discovered_vms = models.PositiveIntegerField(default=0)
+    discovered_datastores = models.PositiveIntegerField(default=0)
     metric_count = models.PositiveIntegerField(default=0)
     error = models.TextField(blank=True)

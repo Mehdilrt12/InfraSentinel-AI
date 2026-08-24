@@ -26,5 +26,5 @@ WebSocket, notifications email et exécution asynchrone avec Redis/Celery.
 SQLite reste disponible pour les tests et la démonstration avec
 `DATABASE_ENGINE=sqlite`; PostgreSQL demeure la configuration cible.
 
-Voir `docs/RECONSTRUCTION.md`, `docs/ARCHITECTURE.md` et
-`docs/ASYNC_TASKS.md`.
+Voir `docs/RECONSTRUCTION_AUDIT.md` pour la revue stricte et ses limites externes,
+puis `docs/RECONSTRUCTION.md`, `docs/ARCHITECTURE.md` et `docs/ASYNC_TASKS.md`.

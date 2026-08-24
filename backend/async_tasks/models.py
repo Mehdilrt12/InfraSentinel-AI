@@ -8,6 +8,13 @@ class TaskRun(models.Model):
         SUCCESS = "SUCCESS", "Succès"
         FAILED = "FAILED", "Échec"
 
+    customer = models.ForeignKey(
+        Customer,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="task_runs",
+    )
     task_name = models.CharField(max_length=160)
     idempotency_key = models.CharField(max_length=255)
     celery_task_id = models.CharField(max_length=100, blank=True)
@@ -22,11 +29,20 @@ class TaskRun(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
+                fields=["customer", "task_name", "idempotency_key"],
+                condition=models.Q(customer__isnull=False),
+                name="uniq_customer_task_idempotency_key",
+            ),
+            models.UniqueConstraint(
                 fields=["task_name", "idempotency_key"],
-                name="uniq_task_idempotency_key",
-            )
+                condition=models.Q(customer__isnull=True),
+                name="uniq_global_task_idempotency_key",
+            ),
         ]
-        indexes = [models.Index(fields=["task_name", "status", "started_at"])]
+        indexes = [
+            models.Index(fields=["task_name", "status", "started_at"]),
+            models.Index(fields=["customer", "status", "started_at"]),
+        ]
 
 
 class GeneratedReport(models.Model):

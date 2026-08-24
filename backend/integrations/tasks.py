@@ -39,6 +39,7 @@ def _collect(connector, collector):
     run.finished_at = timezone.now()
     run.discovered_hosts = result["hosts"]
     run.discovered_vms = result["vms"]
+    run.discovered_datastores = result["datastores"]
     run.metric_count = result["metrics"]
     run.save()
     return result
@@ -68,6 +69,7 @@ def collect_vmware_connector(self, connector_id, idempotency_key=None):
         idempotency_key or f"{connector_id}:{_bucket()}",
         self.request.id,
         lambda: _collect(connector, VMwareCollector(config)),
+        customer_id=connector.customer_id,
     )
 
 
@@ -94,6 +96,7 @@ def collect_hyperv_connector(self, connector_id, idempotency_key=None):
         idempotency_key or f"{connector_id}:{_bucket()}",
         self.request.id,
         lambda: _collect(connector, HyperVCollector(config)),
+        customer_id=connector.customer_id,
     )
 
 
