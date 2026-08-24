@@ -1,0 +1,16 @@
+{
+  "backend_url": "https://monitoring.example.net",
+  "machine_name": "WINDOWS-SRV-01",
+  "interval_seconds": 30,
+  "heartbeat_seconds": 60,
+  "request_timeout_seconds": 15,
+  "verify_tls": true,
+  "critical_services": ["W32Time", "WinRM"],
+  "latency_host": "monitoring.example.net",
+  "latency_port": 443,
+  "spool_max_items": 10000,
+  "log_max_bytes": 5242880,
+  "log_backup_count": 5,
+  "allow_http_localhost": false
+}
+

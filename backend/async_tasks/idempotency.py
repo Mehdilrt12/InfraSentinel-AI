@@ -1,0 +1,46 @@
+from datetime import timedelta
+from django.db import IntegrityError, transaction
+from django.utils import timezone
+from .models import TaskRun
+
+
+def run_once(task_name, key, celery_task_id, function, *, stale_after_seconds=3600):
+    now = timezone.now()
+    with transaction.atomic():
+        try:
+            run = TaskRun.objects.select_for_update().get(
+                task_name=task_name, idempotency_key=key
+            )
+            if run.status == TaskRun.Status.SUCCESS:
+                return {"duplicate": True, **run.result}
+            if (
+                run.status == TaskRun.Status.RUNNING
+                and run.started_at > now - timedelta(seconds=stale_after_seconds)
+            ):
+                return {"duplicate": True, "running": True}
+            run.status = TaskRun.Status.RUNNING
+            run.celery_task_id = celery_task_id or ""
+            run.error = ""
+            run.started_at = now
+            run.finished_at = None
+            run.save()
+        except TaskRun.DoesNotExist:
+            try:
+                run = TaskRun.objects.create(
+                    task_name=task_name,
+                    idempotency_key=key,
+                    celery_task_id=celery_task_id or "",
+                )
+            except IntegrityError:
+                return {"duplicate": True, "raced": True}
+    try:
+        result = function() or {}
+    except Exception as exc:
+        TaskRun.objects.filter(pk=run.pk).update(
+            status=TaskRun.Status.FAILED, error=str(exc), finished_at=timezone.now()
+        )
+        raise
+    TaskRun.objects.filter(pk=run.pk).update(
+        status=TaskRun.Status.SUCCESS, result=result, finished_at=timezone.now()
+    )
+    return {"duplicate": False, **result}
