@@ -253,7 +253,7 @@ Le schéma exporté sert d'artefact de comparaison. Il n'est pas commité afin q
 `/api/schema/` reste la source de vérité générée depuis le code courant.
 
 Le 26 août 2026, la génération complète avec `--validate` a réussi, puis la suite
-Django PostgreSQL/Redis a trouvé 186 tests : 183 réussis, 3 ignorés et aucun échec. La validation OpenAPI
+Django PostgreSQL/Redis a trouvé 191 tests : 188 réussis, 3 ignorés et aucun échec. La validation OpenAPI
 prouve la cohérence des routes inspectées; elle ne remplace pas une recette des
 services externes VMware, Hyper-V ou SMTP.
 

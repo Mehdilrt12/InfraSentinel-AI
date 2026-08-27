@@ -72,7 +72,7 @@ Import-DotEnv backend/.env
 ```
 
 Le 26 août 2026, la découverte complète Django a créé une base de test PostgreSQL,
-trouvé **186 tests** : **183 réussis, 3 ignorés et 0 échec**. Le
+trouvé **191 tests** : **188 réussis, 3 ignorés et 0 échec**. Le
 schéma OpenAPI a aussi été généré et validé. Ce résultat remplace le chiffre
 historique de 48 tests, qui ne représentait qu'une étape de reconstruction.
 

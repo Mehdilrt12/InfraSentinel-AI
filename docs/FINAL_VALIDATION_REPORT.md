@@ -67,7 +67,7 @@ la couche Channels.
 
 | Domaine | État | Preuve ou limite |
 |---|---|---|
-| Backend Django/DRF | PASS | checks, migrations, OpenAPI et 186 tests découverts |
+| Backend Django/DRF | PASS | checks, migrations, OpenAPI et 191 tests découverts |
 | PostgreSQL | PASS | moteur Django PostgreSQL, PostgreSQL 17.11, migration vierge Docker |
 | Redis/Celery/Beat | PASS | PING/PONG, worker réel, tâches réelles, Beat sain en Docker |
 | Frontend React/Vite | PASS automatisé / PARTIAL visuel courant | 20 tests, lint, build, 15 routes HTTP 200 ; audit visuel intégré courant bloqué par la politique loopback du navigateur |
@@ -395,7 +395,7 @@ scripts/test-all.ps1 -Database postgresql -RedisIntegration
 
 | Suite | Découverts | Réussis | Échecs | Skipped |
 |---|---:|---:|---:|---:|
-| Backend PostgreSQL | 186 | 183 | 0 | 3 |
+| Backend PostgreSQL | 191 | 188 | 0 | 3 |
 | Agent | 25 | 25 | 0 | 0 |
 | Frontend | 20 | 20 | 0 | 0 |
 | Total | 231 | 228 | 0 | 3 |

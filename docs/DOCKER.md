@@ -234,7 +234,7 @@ Validation réalisée les 24, 25 et 26 août 2026 avec Docker Engine 29.6.2 et C
 | Celery | tâche réelle réussie, résultat `{'triggered': 0}` |
 | Files worker | `celery` et `hyperv` actives |
 | Redémarrage worker | retour à `healthy` réussi |
-| Backend PostgreSQL/Redis | 186 découverts : 183 réussis, 3 ignorés, 0 échec |
+| Backend PostgreSQL/Redis | 191 découverts : 188 réussis, 3 ignorés, 0 échec |
 | Intégration Redis/broker | 3 tests supplémentaires réussis |
 | Frontend | 18 tests réussis |
 | ESLint | réussi, zéro avertissement |

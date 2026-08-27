@@ -79,7 +79,7 @@ Les contrôles suivants ont été exécutés localement sur Windows avec Postgre
 |---|---|
 | `manage.py check` | 0 problème |
 | `makemigrations --check --dry-run` | aucune migration manquante |
-| Suite Django/PostgreSQL/Redis | 186 découverts, **183 réussis**, 3 ignorés, 0 échec |
+| Suite Django/PostgreSQL/Redis | 191 découverts, **188 réussis**, 3 ignorés, 0 échec |
 | Couverture backend | **87 %** lignes/branches agrégées |
 | Tests agent | **25/25 réussis** |
 | Tests frontend | **20/20 réussis** |

@@ -95,7 +95,7 @@ docker compose --env-file .env exec -T api python manage.py migrate --check
 ```
 
 Résultats : aucun problème Django, aucun changement de modèle, migrations à
-jour, 186 tests découverts, 183 réussis et 3 skips externes. Les tests de
+jour, 191 tests découverts, 188 réussis et 3 skips externes. Les tests de
 concurrence PostgreSQL couvrent multi-agent, alertes et notification unique.
 Une coupure DB a produit HTTP 503, puis le redémarrage a retrouvé 11 machines et
 le même modèle actif.
@@ -127,8 +127,8 @@ l'émission reste correctement signalée, pas masquée.
 **PASS dans le périmètre local.** Suite complète :
 
 ```text
-DISCOVERED 186
-PASS       183
+DISCOVERED 191
+PASS       188
 FAIL       0
 SKIPPED    3
 COVERAGE   87 %

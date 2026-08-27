@@ -19,6 +19,21 @@ technique finale.
 
 ## Démarrage local
 
+### Nouveau laptop Windows (Docker recommandé)
+
+```powershell
+git clone https://github.com/Mehdilrt12/InfraSentinel-AI.git
+cd InfraSentinel-AI
+Set-ExecutionPolicy -Scope Process Bypass
+./scripts/bootstrap-windows-laptop.ps1
+```
+
+Ce script génère des secrets locaux, démarre toute la stack, applique les
+migrations et crée de façon sécurisée le premier tenant administrateur. Voir
+`docs/LAPTOP_SETUP.md`. Pour un accès depuis le LAN, ajouter l'option `-Lan`.
+
+### Développement hybride
+
 1. Copier `backend/.env.example` vers `backend/.env` et
    `frontend/.env.example` vers `frontend/.env`, puis remplacer les secrets
    d'exemple. Exécuter `scripts/prepare-local-compose-env.ps1` pour préparer le
@@ -35,5 +50,5 @@ Commencer par `docs/LOCAL_FINAL_VALIDATION_REPORT.md` pour l'état strict du
 laboratoire, puis par `docs/README.md` pour l'index, les commandes et le
 troubleshooting. Les rapports `docs/RECONSTRUCTION_AUDIT.md` et
 `docs/TEST_RECOVERY_REPORT.md` restent des preuves historiques; les résultats
-courants sont 186 tests Django découverts sur PostgreSQL : 183 réussis, 3 ignorés
+courants sont 191 tests Django découverts sur PostgreSQL : 188 réussis, 3 ignorés
 et aucun échec.

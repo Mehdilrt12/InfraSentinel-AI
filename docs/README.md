@@ -10,6 +10,7 @@ les validations qui nécessitent encore une infrastructure externe.
 |---|---|
 | Vérifier la release de soutenance | [validation locale finale](LOCAL_FINAL_VALIDATION_REPORT.md), [validation historique](FINAL_VALIDATION_REPORT.md), [release finale](FINAL_RELEASE.md) |
 | Comprendre le système | [Architecture](ARCHITECTURE.md), [base de données](DATABASE.md), [métriques](METRICS.md) |
+| Installer sur un laptop | [installation Windows/Docker](LAPTOP_SETUP.md) |
 | Exploiter en local/LAN | [architecture du laboratoire](LOCAL_LAB_ARCHITECTURE.md), [audit des données réelles](REAL_LOCAL_DATA_AUDIT.md), [campagne LAN](REAL_LOCAL_LAN_VALIDATION.md) |
 | Utiliser l'API | [API/OpenAPI](API.md), [temps réel](REALTIME.md), [audit](AUDIT_LOGS.md) |
 | Exploiter la supervision | [règles](RULE_ENGINE.md), [alertes](ALERT_ENGINE.md), [recommandations](RECOMMENDATIONS.md), [notifications](NOTIFICATIONS.md) |
@@ -30,8 +31,8 @@ de validation courants dans ce document et dans `DATABASE.md` les remplacent.
 - Frontend : React 19.1.1, Vite 6.4.3, Axios et Recharts.
 - ML : scikit-learn 1.9, pandas 3.0.3, Isolation Forest versionné par tenant.
 - Agent : Python, psutil, requests, pywin32, service Windows et installateur Inno Setup.
-- Suite Django complète sur PostgreSQL et Redis réel : **186 découverts,
-  183 réussis, 3 ignorés, 0 échec**, le 26 août 2026.
+- Suite Django complète sur PostgreSQL et Redis réel : **191 découverts,
+  188 réussis, 3 ignorés, 0 échec**, le 27 août 2026.
 - Schéma OpenAPI : génération et validation `drf-spectacular` réussies.
 
 Cela ne prouve pas une connexion réelle à vCenter, une collecte Hyper-V autorisée,

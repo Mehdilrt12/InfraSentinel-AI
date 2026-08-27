@@ -154,7 +154,7 @@ Résultats obtenus le 24 août 2026 après remédiation :
 
 | Contrôle | Résultat |
 |---|---|
-| Suite Django complète sur PostgreSQL/Redis | 186 découverts : 183 réussis, 0 échec, 3 ignorés explicitement |
+| Suite Django complète sur PostgreSQL/Redis | 191 découverts : 188 réussis, 0 échec, 3 ignorés explicitement |
 | Tests agent Windows | 25 réussis, 0 échec |
 | Tests frontend | 18 réussis, 0 échec |
 | Ruff backend/agent/connecteurs | aucun problème |
