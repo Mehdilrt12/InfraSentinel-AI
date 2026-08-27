@@ -42,8 +42,9 @@ un compteur zéro. Aucun seed n'est recréé automatiquement.
 
 ## Phases 4 à 8 - réseau, frontend, API et WebSocket
 
-Adresse IPv4 active observée : `192.168.0.133` sur l'interface Wi-Fi. Cette
-adresse n'est pas écrite dans les fichiers versionnés; le script
+Adresse IPv4 active observée lors de la reprise : `192.168.1.3` sur l'interface
+Wi-Fi (l'adresse initiale `192.168.0.133` avait changé entre les deux sessions).
+Cette adresse n'est pas écrite dans les fichiers versionnés; le script
 `prepare-local-compose-env.ps1 -Lan` l'injecte dans `.env`, qui est ignoré par
 Git.
 
@@ -58,7 +59,7 @@ Configuration vérifiée :
 
 Le frontend utilise le proxy same-origin `/api` et `/ws`; aucune URL localhost
 n'est imposée à un navigateur distant. Le probe WebSocket effectué contre
-`ws://192.168.0.133:8000/ws/events/` avec origine LAN a observé :
+`ws://192.168.1.3:8000/ws/events/` avec origine LAN a observé :
 
 ```text
 clients simultanés: 2
@@ -108,11 +109,11 @@ poste principal et le second appareil reste requis.
 
 | Contrôle | Résultat |
 |---|---|
-| Origine CORS `http://192.168.0.133:5173` | autorisée |
+| Origine CORS `http://192.168.1.3:5173` | autorisée |
 | Origine CORS `http://evil.invalid` | aucun header d'autorisation |
 | Header `Host: evil.invalid` | HTTP 400 |
-| PostgreSQL via `192.168.0.133:5432` | refusé |
-| Redis via `192.168.0.133:6379` | refusé |
+| PostgreSQL via `192.168.1.3:5432` | refusé |
+| Redis via `192.168.1.3:6379` | refusé |
 | `python manage.py check` | 0 issue |
 | `python manage.py migrate --check` | à jour |
 
