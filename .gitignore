@@ -1,4 +1,5 @@
 .env
+.env.production
 .venv/
 __pycache__/
 *.py[cod]
@@ -14,7 +15,14 @@ frontend/node_modules/
 frontend/dist/
 runtime/
 logs/
+backups/
+tmp/
 backend/model_store/*.joblib
 backend/model_store/*.json
+backend/staticfiles/*
+!backend/staticfiles/.gitkeep
 agent/config.json
 agent/spool/
+agent/build/
+agent/dist/
+installer/windows/output/

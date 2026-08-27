@@ -45,19 +45,24 @@ class HyperVCollector:
                 )
             environment["INFRASENTINEL_HYPERV_SECRET"] = secret
         try:
-            process = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                timeout=self.config.timeout_seconds,
-                env=environment,
-                check=False,
-            )
+            try:
+                process = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.config.timeout_seconds,
+                    env=environment,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise HyperVCollectionError(
+                    f"Délai de collecte Hyper-V dépassé ({self.config.timeout_seconds}s)."
+                ) from exc
         finally:
             environment.pop("INFRASENTINEL_HYPERV_SECRET", None)
         if process.returncode:
             raise HyperVCollectionError(
-                (process.stderr or process.stdout or "Échec PowerShell Hyper-V").strip()
+                f"Échec PowerShell Hyper-V (code {process.returncode})."
             )
         try:
             return json.loads(process.stdout)

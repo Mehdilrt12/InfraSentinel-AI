@@ -1,75 +1,243 @@
+x-app-environment: &app-environment
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?DJANGO_SECRET_KEY must be set}
+  JWT_SIGNING_KEY: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY must be set}
+  DJANGO_DEBUG: ${DJANGO_DEBUG:-false}
+  ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1,api}
+  FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+  CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+  DATABASE_ENGINE: postgresql
+  POSTGRES_DB: ${POSTGRES_DB:-infrasentinel}
+  POSTGRES_USER: ${POSTGRES_USER:-infrasentinel}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+  POSTGRES_HOST: db
+  POSTGRES_PORT: "5432"
+  POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-disable}
+  POSTGRES_CONN_MAX_AGE: ${POSTGRES_CONN_MAX_AGE:-60}
+  REDIS_URL: redis://redis:6379/0
+  CACHE_URL: redis://redis:6379/2
+  CELERY_BROKER_URL: redis://redis:6379/0
+  CELERY_RESULT_BACKEND: redis://redis:6379/1
+  CELERY_TASK_ALWAYS_EAGER: "false"
+  CELERY_TASK_TIME_LIMIT: ${CELERY_TASK_TIME_LIMIT:-900}
+  CELERY_TASK_SOFT_TIME_LIMIT: ${CELERY_TASK_SOFT_TIME_LIMIT:-840}
+  CHANNEL_LAYER: redis
+  ML_MODEL_DIR: /app/model_store
+  EMAIL_BACKEND: ${EMAIL_BACKEND:-django.core.mail.backends.console.EmailBackend}
+  DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-InfraSentinel <noreply@infrasentinel.local>}
+  EMAIL_HOST: ${EMAIL_HOST:-}
+  EMAIL_PORT: ${EMAIL_PORT:-587}
+  EMAIL_HOST_USER: ${EMAIL_HOST_USER:-}
+  EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
+  EMAIL_USE_TLS: ${EMAIL_USE_TLS:-true}
+  EMAIL_TIMEOUT: ${EMAIL_TIMEOUT:-30}
+  NOTIFICATION_SENDING_TIMEOUT_SECONDS: ${NOTIFICATION_SENDING_TIMEOUT_SECONDS:-300}
+  API_DOCS_PUBLIC: ${API_DOCS_PUBLIC:-false}
+  PUBLIC_REGISTRATION_ENABLED: ${PUBLIC_REGISTRATION_ENABLED:-false}
+  SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+  CSRF_COOKIE_SECURE: ${CSRF_COOKIE_SECURE:-false}
+  JWT_REFRESH_COOKIE_SECURE: ${JWT_REFRESH_COOKIE_SECURE:-false}
+  JWT_REFRESH_COOKIE_SAMESITE: ${JWT_REFRESH_COOKIE_SAMESITE:-Strict}
+  SECURE_SSL_REDIRECT: ${SECURE_SSL_REDIRECT:-false}
+  SECURE_HSTS_SECONDS: ${SECURE_HSTS_SECONDS:-0}
+  SECURE_HSTS_INCLUDE_SUBDOMAINS: ${SECURE_HSTS_INCLUDE_SUBDOMAINS:-false}
+  SECURE_HSTS_PRELOAD: ${SECURE_HSTS_PRELOAD:-false}
+  TRUSTED_PROXY_COUNT: ${TRUSTED_PROXY_COUNT:-1}
+  TRUST_X_FORWARDED_PROTO: ${TRUST_X_FORWARDED_PROTO:-false}
+  CONNECTOR_ALLOWED_HOSTS: ${CONNECTOR_ALLOWED_HOSTS:-}
+  ALLOW_INSECURE_CONNECTOR_TLS: ${ALLOW_INSECURE_CONNECTOR_TLS:-false}
+  WEBSOCKET_SESSION_MAX_SECONDS: ${WEBSOCKET_SESSION_MAX_SECONDS:-900}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+x-backend-service: &backend-service
+  image: infrasentinel-backend:${INFRASENTINEL_IMAGE_TAG:-local}
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
+  environment: *app-environment
+  init: true
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  networks:
+    - backend
+  stop_grace_period: 30s
+  pids_limit: 512
+
 services:
   db:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    ports:
-      - "${POSTGRES_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT}:5432"
+      POSTGRES_DB: ${POSTGRES_DB:-infrasentinel}
+      POSTGRES_USER: ${POSTGRES_USER:-infrasentinel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-  redis:
-    image: redis:7.4-alpine
-    command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "${REDIS_BIND_ADDRESS:-127.0.0.1}:${REDIS_PORT}:6379"
+      - "${POSTGRES_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_HOST_PORT:-5432}:5432"
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - backend
+    stop_grace_period: 30s
+
+  redis:
+    image: redis:7.4-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
     volumes:
       - redis_data:/data
+    ports:
+      - "${REDIS_BIND_ADDRESS:-127.0.0.1}:${REDIS_HOST_PORT:-6379}:6379"
+    expose:
+      - "6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 20
-  worker:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    command: celery -A config worker -l INFO -Q celery
-    env_file: ./backend/.env
-    environment: &service_environment
-      POSTGRES_HOST: db
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
-      ML_MODEL_DIR: /app/model_store
-    volumes:
-      - model_store:/app/model_store
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - backend
+    stop_grace_period: 20s
+
+  migrate:
+    <<: *backend-service
+    command: ["migrate"]
+    restart: "no"
     depends_on:
-      db: {condition: service_healthy}
-      redis: {condition: service_healthy}
-  beat:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    command: celery -A config beat -l INFO
-    env_file: ./backend/.env
-    environment: *service_environment
-    volumes:
-      - model_store:/app/model_store
-    depends_on:
-      db: {condition: service_healthy}
-      redis: {condition: service_healthy}
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   api:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    command: daphne -b 0.0.0.0 -p 8000 config.asgi:application
-    env_file: ./backend/.env
-    environment: *service_environment
+    <<: *backend-service
+    command: ["api"]
     volumes:
       - model_store:/app/model_store
+      - static_data:/app/staticfiles
     ports:
-      - "8000:8000"
+      - "${API_BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; request=urllib.request.Request('http://127.0.0.1:8000/api/health/', headers={'Host':'api','X-Forwarded-Proto':'https'}); urllib.request.urlopen(request, timeout=5)"
+      interval: 10s
+      timeout: 6s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - edge
+      - backend
     depends_on:
-      db: {condition: service_healthy}
-      redis: {condition: service_healthy}
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  worker:
+    <<: *backend-service
+    command: ["worker"]
+    environment:
+      <<: *app-environment
+      CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-2}
+    volumes:
+      - model_store:/app/model_store
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "celery -A config inspect ping -d worker@$$HOSTNAME --timeout=5 | grep -q pong"
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  beat:
+    <<: *backend-service
+    command: ["beat"]
+    volumes:
+      - celerybeat_data:/app/celerybeat
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "test -s /app/celerybeat/celerybeat.pid && kill -0 $$(cat /app/celerybeat/celerybeat.pid)"
+      interval: 20s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  frontend:
+    image: infrasentinel-frontend:${INFRASENTINEL_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-/api}
+        VITE_PUBLIC_REGISTRATION_ENABLED: ${VITE_PUBLIC_REGISTRATION_ENABLED:-false}
+        VITE_ENABLE_SOURCEMAPS: ${VITE_ENABLE_SOURCEMAPS:-false}
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+      - /var/cache/nginx:size=16m,mode=0755
+      - /var/run:size=1m,mode=0755
+    ports:
+      - "${FRONTEND_BIND_ADDRESS:-127.0.0.1}:${FRONTEND_PORT:-5173}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - edge
+    depends_on:
+      api:
+        condition: service_healthy
+    stop_grace_period: 20s
+    pids_limit: 128
+
 volumes:
   postgres_data:
   redis_data:
   model_store:
+  static_data:
+  celerybeat_data:
+
+networks:
+  edge:
+    driver: bridge
+  backend:
+    driver: bridge

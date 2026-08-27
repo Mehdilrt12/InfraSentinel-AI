@@ -1,8 +1,9 @@
-import { Activity, Bell, Bot, Boxes, BrainCircuit, Check, CloudCog, Cpu, Database, HardDrive, MemoryStick, Network, Plus, Power, RefreshCw, Save, Server, ShieldAlert, UserRoundCog } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { Activity, Bell, Bot, Boxes, BrainCircuit, Check, CloudCog, Cpu, Database, Download, HardDrive, MemoryStick, Network, Plus, Power, RefreshCw, Save, Server, ShieldAlert, UserRoundCog } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Area, AreaChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api } from '../api'
+import { isManager, useAuth } from '../auth'
 import { DataState, formatNumber, Page, Severity, Status, Table } from '../components'
 import { useApi } from '../hooks'
 
@@ -27,13 +28,16 @@ export function MachineDetail() {
 
 export function Agents() {
   const state = useApi('/agents/', { list: true }); const columns = [{ key: 'hostname', label: 'Agent' }, { key: 'version', label: 'Version' }, { key: 'enabled', label: 'Actif', render: (value) => value ? <Status value="ONLINE" /> : <Status value="OFFLINE" /> }, { key: 'last_heartbeat', label: 'Heartbeat', render: (value) => value ? new Date(value).toLocaleString('fr-FR') : 'Jamais' }]
-  return <Page title="Agents Windows" description="Enrollment, versions et état des heartbeats."><DataState state={state} empty="Créez un code d’enrollment depuis un environnement Windows."><Table columns={columns} rows={state.data} /></DataState></Page>
+  const installerUrl = import.meta.env.VITE_AGENT_INSTALLER_URL
+  const download = installerUrl ? <a className="primary compact" href={installerUrl} rel="noreferrer"><Download />Télécharger l’agent</a> : null
+  return <Page title="Agents Windows" description="Enrollment, versions et état des heartbeats." actions={download}><DataState state={state} empty="Créez un code d’enrollment depuis un environnement Windows."><Table columns={columns} rows={state.data} /></DataState></Page>
 }
 
 export function Alerts() {
+  const { user } = useAuth(); const canManage = isManager(user)
   const state = useApi('/alerts/', { list: true })
   async function transition(id, status) { await api.patch(`/alerts/${id}/`, { status }); window.location.reload() }
-  const columns = [{ key: 'severity', label: 'Sévérité', render: (value) => <Severity value={value} /> }, { key: 'hostname', label: 'Machine' }, { key: 'message', label: 'Message' }, { key: 'occurrences', label: 'Occurrences' }, { key: 'status', label: 'État', render: (value) => <Status value={value} /> }, { key: 'id', label: 'Action', render: (id, row) => row.status !== 'RESOLVED' ? <div className="row-actions"><button onClick={(event) => { event.stopPropagation(); transition(id, 'ACKNOWLEDGED') }}>Acquitter</button><button onClick={(event) => { event.stopPropagation(); transition(id, 'RESOLVED') }}>Résoudre</button></div> : '—' }]
+  const columns = [{ key: 'severity', label: 'Sévérité', render: (value) => <Severity value={value} /> }, { key: 'hostname', label: 'Machine' }, { key: 'message', label: 'Message' }, { key: 'occurrences', label: 'Occurrences' }, { key: 'status', label: 'État', render: (value) => <Status value={value} /> }, { key: 'id', label: 'Action', render: (id, row) => canManage && row.status !== 'RESOLVED' ? <div className="row-actions"><button onClick={(event) => { event.stopPropagation(); transition(id, 'ACKNOWLEDGED') }}>Acquitter</button><button onClick={(event) => { event.stopPropagation(); transition(id, 'RESOLVED') }}>Résoudre</button></div> : '—' }]
   return <Page title="Alertes centralisées" description="Déduplication, corrélation, escalade et recommandations."><DataState state={state} empty="Aucune alerte : les moteurs continuent leur analyse."><Table columns={columns} rows={state.data} /></DataState></Page>
 }
 
@@ -43,10 +47,13 @@ export function Anomalies() {
 }
 
 function IntegrationPage({ source, title, icon: Icon }) {
+  const { user } = useAuth(); const canManage = isManager(user)
   const state = useApi(`/${source.toLowerCase()}/overview/`); const navigate = useNavigate()
   async function collect(id) { await api.post(`/connectors/${id}/collect/`) }
   const assets = state.data ? [...state.data.hosts, ...state.data.vms, ...(state.data.datastores || [])] : []
-  return <Page title={title} description={`Découverte, état et métriques ${title}.`}><DataState state={state}>{state.data && <><div className="integration-summary"><article><Icon /><strong>{state.data.connectors.length}</strong><span>Connecteurs</span></article><article><Server /><strong>{state.data.hosts.length}</strong><span>Hôtes</span></article><article><Boxes /><strong>{state.data.vms.length}</strong><span>Machines virtuelles</span></article></div><section className="panel"><div className="panel-head"><div><h2>Connecteurs</h2><p>Secrets référencés par variable ou coffre, jamais exposés.</p></div></div>{state.data.connectors.length ? <Table rows={state.data.connectors} columns={[{ key:'name',label:'Nom'},{key:'endpoint',label:'Endpoint'},{key:'last_sync_at',label:'Dernière collecte',render:(value)=>value?new Date(value).toLocaleString('fr-FR'):'Jamais'},{key:'last_error',label:'État',render:(value)=>value?<Severity value="CRITICAL"/>:<Status value="ONLINE"/>},{key:'id',label:'Action',render:(id)=><button onClick={()=>collect(id)}><RefreshCw/>Collecter</button>}]} /> : <p className="muted">Aucun connecteur configuré.</p>}</section><section className="panel"><h2>Hôtes, VM et datastores découverts</h2>{assets.length ? <Table rows={assets} columns={[{key:'kind',label:'Type'},{key:'name',label:'Nom'},{key:'state',label:'État',render:(value)=><Status value={value}/>},{key:'last_seen',label:'Dernière vue',render:(value)=>value?new Date(value).toLocaleString('fr-FR'):'—'}]} onRow={(row)=>navigate(`/${source.toLowerCase()}/${row.id}`)}/> : <p className="muted">Aucune donnée réelle collectée.</p>}</section></>}</DataState></Page>
+  const connectorColumns = [{ key:'name',label:'Nom'},{key:'endpoint',label:'Endpoint'},{key:'last_sync_at',label:'Dernière collecte',render:(value)=>value?new Date(value).toLocaleString('fr-FR'):'Jamais'},{key:'last_error',label:'État',render:(value)=>value?<Severity value="CRITICAL"/>:<Status value="ONLINE"/>}]
+  if (canManage) connectorColumns.push({key:'id',label:'Action',render:(id)=><button onClick={()=>collect(id)}><RefreshCw/>Collecter</button>})
+  return <Page title={title} description={`Découverte, état et métriques ${title}.`}><DataState state={state}>{state.data && <><div className="integration-summary"><article><Icon /><strong>{state.data.connectors.length}</strong><span>Connecteurs</span></article><article><Server /><strong>{state.data.hosts.length}</strong><span>Hôtes</span></article><article><Boxes /><strong>{state.data.vms.length}</strong><span>Machines virtuelles</span></article></div><section className="panel"><div className="panel-head"><div><h2>Connecteurs</h2><p>Secrets référencés par variable ou coffre, jamais exposés.</p></div></div>{state.data.connectors.length ? <Table rows={state.data.connectors} columns={connectorColumns} /> : <p className="muted">Aucun connecteur configuré.</p>}</section><section className="panel"><h2>Hôtes, VM et datastores découverts</h2>{assets.length ? <Table rows={assets} columns={[{key:'kind',label:'Type'},{key:'name',label:'Nom'},{key:'state',label:'État',render:(value)=><Status value={value}/>},{key:'last_seen',label:'Dernière vue',render:(value)=>value?new Date(value).toLocaleString('fr-FR'):'—'}]} onRow={(row)=>navigate(`/${source.toLowerCase()}/${row.id}`)}/> : <p className="muted">Aucune donnée réelle collectée.</p>}</section></>}</DataState></Page>
 }
 export const VMware = () => <IntegrationPage source="VMWARE" title="VMware / vCenter" icon={CloudCog} />
 export const HyperV = () => <IntegrationPage source="HYPERV" title="Microsoft Hyper-V" icon={Boxes} />
@@ -55,10 +62,12 @@ function AssetDetail({ source }) { const { id }=useParams(); const asset=useApi(
 export const VMwareDetail=()=> <AssetDetail source="VMware" />; export const HyperVDetail=()=> <AssetDetail source="Hyper-V" />
 
 export function ML() {
+  const { user }=useAuth(); const canManage=isManager(user)
   const models=useApi('/ml/models/',{list:true}); const anomalies=useApi('/anomalies/',{list:true}); const [queued,setQueued]=useState(false); const [evaluationQueued,setEvaluationQueued]=useState(false)
   async function train(){setQueued(true);try{await api.post('/ml/models/train/',{days:30,idempotency_key:`manual-${Date.now()}`})}finally{setQueued(false)}}
   async function evaluate(){setEvaluationQueued(true);try{await api.post('/ml/models/evaluate/',{days:30,idempotency_key:`manual-eval-${Date.now()}`})}finally{setEvaluationQueued(false)}}
-  return <Page title="Machine Learning" description="Isolation Forest reproductible, modèles versionnés et explications." actions={<><button onClick={evaluate} disabled={evaluationQueued}>{evaluationQueued?'Planification…':'Évaluer règles / ML'}</button><button className="primary compact" onClick={train} disabled={queued}><BrainCircuit/>{queued?'Planification…':'Entraîner'}</button></>}><DataState state={models}><div className="model-grid">{models.data.map((model)=><article className="panel" key={model.id}><div className="panel-head"><BrainCircuit/><Severity value={model.active?'HIGH':'INFO'}/></div><h2>{model.version}</h2><p>{model.algorithm} · {model.dataset?.rows||0} fenêtres réelles</p><dl><div><dt>Contamination</dt><dd>{model.parameters?.contamination}</dd></div><div><dt>Estimateurs</dt><dd>{model.parameters?.n_estimators}</dd></div><div><dt>Seuil</dt><dd>{formatNumber(model.decision_threshold,4)}</dd></div><div><dt>Anomalies validation</dt><dd>{formatNumber((model.evaluation_metrics?.validation_anomaly_rate||0)*100,2)}%</dd></div><div><dt>Validation</dt><dd>{model.evaluation_metrics?.method || 'Non évalué'}</dd></div><div><dt>Vérité terrain</dt><dd>{model.evaluation_metrics?.ground_truth_available ? 'Disponible' : 'Absente'}</dd></div></dl></article>)}</div></DataState><section className="panel"><h2>Dernières anomalies</h2><DataState state={anomalies}><Table rows={anomalies.data.slice(0,20)} columns={[{key:'hostname',label:'Machine'},{key:'score',label:'Score',render:(value)=>formatNumber(value,4)},{key:'model_version',label:'Modèle'},{key:'detected_at',label:'Date',render:(value)=>new Date(value).toLocaleString('fr-FR')}]} /></DataState></section></Page>
+  const actions=canManage?<><button onClick={evaluate} disabled={evaluationQueued}>{evaluationQueued?'Planification…':'Évaluer règles / ML'}</button><button className="primary compact" onClick={train} disabled={queued}><BrainCircuit/>{queued?'Planification…':'Entraîner'}</button></>:null
+  return <Page title="Machine Learning" description="Isolation Forest reproductible, modèles versionnés et explications." actions={actions}><DataState state={models}><div className="model-grid">{models.data.map((model)=><article className="panel" key={model.id}><div className="panel-head"><BrainCircuit/><Severity value={model.active?'HIGH':'INFO'}/></div><h2>{model.version}</h2><p>{model.algorithm} · {model.dataset?.rows||0} {model.dataset?.synthetic?'fenêtres synthétiques de démonstration':'fenêtres réelles'}</p><dl><div><dt>Contamination</dt><dd>{model.parameters?.contamination}</dd></div><div><dt>Estimateurs</dt><dd>{model.parameters?.n_estimators}</dd></div><div><dt>Seuil</dt><dd>{formatNumber(model.decision_threshold,4)}</dd></div><div><dt>Anomalies validation</dt><dd>{formatNumber((model.evaluation_metrics?.validation_anomaly_rate||0)*100,2)}%</dd></div><div><dt>Validation</dt><dd>{model.evaluation_metrics?.method || 'Non évalué'}</dd></div><div><dt>Vérité terrain</dt><dd>{model.evaluation_metrics?.ground_truth_available ? 'Disponible' : 'Absente'}</dd></div></dl></article>)}</div></DataState><section className="panel"><h2>Dernières anomalies</h2><DataState state={anomalies}><Table rows={anomalies.data.slice(0,20)} columns={[{key:'hostname',label:'Machine'},{key:'score',label:'Score',render:(value)=>formatNumber(value,4)},{key:'model_version',label:'Modèle'},{key:'detected_at',label:'Date',render:(value)=>new Date(value).toLocaleString('fr-FR')}]} /></DataState></section></Page>
 }
 
 export function Users(){const state=useApi('/users/',{list:true});return <Page title="Utilisateurs" description="RBAC et rattachement au tenant."><DataState state={state}><Table rows={state.data} columns={[{key:'email',label:'Email'},{key:'username',label:'Identifiant'},{key:'role',label:'Rôle',render:(value)=><span className="chip">{value}</span>},{key:'is_active',label:'État',render:(value)=><Status value={value?'ONLINE':'OFFLINE'}/>}]}/></DataState></Page>}
@@ -72,4 +81,50 @@ export function SettingsPage(){
   return <Page title="Configuration" description="Règles, notifications et sources sans seuils dispersés."><div className="settings-grid"><section className="panel"><div className="panel-head"><div><h2>Moteur de règles</h2><p>Condition et durée minimale.</p></div><ShieldAlert/></div><form className="form-grid" onSubmit={addRule}><label>Nom<input required value={rule.name} onChange={(e)=>setRule({...rule,name:e.target.value})}/></label><label>Métrique<input required value={rule.metric} onChange={(e)=>setRule({...rule,metric:e.target.value})}/></label><label>Opérateur<select value={rule.operator} onChange={(e)=>setRule({...rule,operator:e.target.value})}>{['>','<','>=','<=','==','!='].map((op)=><option key={op}>{op}</option>)}</select></label><label>Seuil<input type="number" step="any" value={rule.threshold} onChange={(e)=>setRule({...rule,threshold:Number(e.target.value)})}/></label><label>Durée (s)<input type="number" min="0" value={rule.duration_seconds} onChange={(e)=>setRule({...rule,duration_seconds:Number(e.target.value)})}/></label><label>Sévérité<select value={rule.severity} onChange={(e)=>setRule({...rule,severity:e.target.value})}>{['INFO','WARNING','HIGH','CRITICAL'].map((value)=><option key={value}>{value}</option>)}</select></label><label>Environnement<select value={rule.environment||''} onChange={(e)=>setRule({...rule,environment:e.target.value||null})}><option value="">Tous</option>{environments.data.map((item)=><option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label>Machine<select value={rule.machine||''} onChange={(e)=>setRule({...rule,machine:e.target.value||null})}><option value="">Toutes</option>{machines.data.map((item)=><option value={item.id} key={item.id}>{item.hostname}</option>)}</select></label><button className="primary compact"><Plus/>Ajouter la règle</button></form><DataState state={rules}>{rules.data.map((item)=><div className="setting-row" key={item.id}><div><strong>{item.name}</strong><p>{item.metric} {item.operator} {item.threshold} pendant {item.duration_seconds}s</p></div><Severity value={item.severity}/><button onClick={()=>toggleRule(item.id)}><Power/>{item.enabled?'Désactiver':'Activer'}</button></div>)}</DataState></section><section className="panel"><div className="panel-head"><div><h2>Notifications</h2><p>Email d’abord, canaux futurs réservés.</p></div><Bell/></div><form className="form-grid" onSubmit={addPref}><label>Destination email<input type="email" required value={pref.destination} onChange={(e)=>setPref({...pref,destination:e.target.value})}/></label><label>Sévérité minimale<select value={pref.minimum_severity} onChange={(e)=>setPref({...pref,minimum_severity:e.target.value})}>{['HIGH','CRITICAL'].map((value)=><option key={value}>{value}</option>)}</select></label><label>Cooldown (s)<input type="number" min="0" value={pref.cooldown_seconds} onChange={(e)=>setPref({...pref,cooldown_seconds:Number(e.target.value)})}/></label><button className="primary compact"><Save/>Enregistrer</button></form><DataState state={prefs}>{prefs.data.map((item)=><div className="setting-row" key={item.id}><div><strong>{item.destination}</strong><p>{item.channel} · à partir de {item.minimum_severity}</p></div><Status value={item.enabled?'ONLINE':'OFFLINE'}/></div>)}</DataState><div className="panel-head section-gap"><div><h2>Connecteurs</h2><p>VMware et Hyper-V configurés.</p></div><Database/></div><DataState state={connectors}>{connectors.data.map((item)=><div className="setting-row" key={item.id}><div><strong>{item.name}</strong><p>{item.kind} · {item.endpoint}</p></div><Status value={item.last_error?'OFFLINE':'ONLINE'}/></div>)}</DataState></section></div></Page>
 }
 
-export function Audit(){const state=useApi('/audit/',{list:true});return <Page title="Journal d’audit" description="Traçabilité des changements de configuration."><DataState state={state}><Table rows={state.data} columns={[{key:'created_at',label:'Date',render:(value)=>new Date(value).toLocaleString('fr-FR')},{key:'action',label:'Action'},{key:'target_type',label:'Ressource'},{key:'target_id',label:'Identifiant'}]}/></DataState></Page>}
+const AUDIT_ACTIONS = ['USER_LOGIN','USER_LOGOUT','USER_CREATED','USER_UPDATED','AGENT_ENROLLED','AGENT_REVOKED','MACHINE_CREATED','MACHINE_UPDATED','ALERT_CREATED','ALERT_ACKNOWLEDGED','ALERT_RESOLVED','MODEL_TRAINED','CONFIG_CHANGED']
+const EMPTY_AUDIT_FILTERS = { search: '', action: '', actor: '', target_type: '', ip_address: '', from: '', to: '' }
+
+export function Audit() {
+  const [filters, setFilters] = useState(EMPTY_AUDIT_FILTERS)
+  const [applied, setApplied] = useState(EMPTY_AUDIT_FILTERS)
+  const [page, setPage] = useState(1)
+  const [state, setState] = useState({ data: null, loading: true, error: null, partial: false })
+  const params = useMemo(() => {
+    const values = { page, page_size: 25, ordering: '-timestamp' }
+    for (const [key, value] of Object.entries(applied)) if (value) values[key] = ['from', 'to'].includes(key) ? new Date(value).toISOString() : value
+    return values
+  }, [applied, page])
+
+  useEffect(() => {
+    let active = true
+    setState((old) => ({ ...old, loading: !old.data, error: null }))
+    api.get('/audit/', { params }).then(({ data }) => active && setState({ data, loading: false, error: null, partial: false })).catch((error) => active && setState((old) => ({ ...old, loading: false, error: error.response?.data?.detail || 'Le journal d’audit est indisponible.' })))
+    return () => { active = false }
+  }, [params])
+
+  function applyFilters(event) { event.preventDefault(); setPage(1); setApplied({ ...filters }) }
+  function clearFilters() { setFilters(EMPTY_AUDIT_FILTERS); setApplied(EMPTY_AUDIT_FILTERS); setPage(1) }
+  const rows = state.data?.results || []
+  const pages = Math.max(1, Math.ceil((state.data?.count || 0) / 25))
+  const columns = [
+    { key: 'timestamp', label: 'Date', render: (value) => new Date(value).toLocaleString('fr-FR') },
+    { key: 'action', label: 'Action', render: (value) => <span className="chip">{value}</span> },
+    { key: 'actor_email', label: 'Acteur', render: (value) => value || 'Système' },
+    { key: 'target_repr', label: 'Cible', render: (value, row) => value || `${row.target_type}:${row.target_id}` },
+    { key: 'ip_address', label: 'Adresse IP' },
+    { key: 'metadata', label: 'Métadonnées', render: (value) => Object.keys(value || {}).length ? <details className="audit-metadata"><summary>Afficher</summary><pre>{JSON.stringify(value, null, 2)}</pre></details> : '—' },
+  ]
+  return <Page title="Journal d’audit" description="Événements de sécurité et changements opérationnels immuables.">
+    <form className="panel audit-filters" onSubmit={applyFilters}>
+      <label>Recherche<input aria-label="Recherche audit" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} placeholder="Acteur, action, cible…" /></label>
+      <label>Action<select value={filters.action} onChange={(event) => setFilters({ ...filters, action: event.target.value })}><option value="">Toutes</option>{AUDIT_ACTIONS.map((action) => <option key={action}>{action}</option>)}</select></label>
+      <label>Acteur (ID)<input inputMode="numeric" value={filters.actor} onChange={(event) => setFilters({ ...filters, actor: event.target.value })} /></label>
+      <label>Type de cible<input value={filters.target_type} onChange={(event) => setFilters({ ...filters, target_type: event.target.value })} placeholder="inventory.Machine" /></label>
+      <label>Adresse IP<input value={filters.ip_address} onChange={(event) => setFilters({ ...filters, ip_address: event.target.value })} placeholder="203.0.113.10" /></label>
+      <label>Depuis<input type="datetime-local" value={filters.from} onChange={(event) => setFilters({ ...filters, from: event.target.value })} /></label>
+      <label>Jusqu’à<input type="datetime-local" value={filters.to} onChange={(event) => setFilters({ ...filters, to: event.target.value })} /></label>
+      <div className="audit-filter-actions"><button type="button" onClick={clearFilters}>Effacer</button><button className="primary compact" type="submit">Rechercher</button></div>
+    </form>
+    <DataState state={state}>{!state.loading && !rows.length ? <div className="state-card">Aucun événement ne correspond aux filtres.</div> : <><Table rows={rows} columns={columns} /><div className="audit-pagination"><span>{state.data?.count || 0} événements · page {page} sur {pages}</span><div><button disabled={page <= 1} onClick={() => setPage((value) => value - 1)}>Précédente</button><button disabled={page >= pages} onClick={() => setPage((value) => value + 1)}>Suivante</button></div></div></>}</DataState>
+  </Page>
+}

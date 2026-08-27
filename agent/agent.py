@@ -4,6 +4,7 @@ import os
 import signal
 import sys
 import threading
+import re
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -13,6 +14,23 @@ from infrasentinel_agent.config import AgentConfig
 from infrasentinel_agent.credentials import CredentialStore
 from infrasentinel_agent.runtime import AgentRuntime
 from infrasentinel_agent.spool import Spool
+
+
+class RedactingFormatter(logging.Formatter):
+    _patterns = (
+        (re.compile(r"(?i)(bearer\s+)[^\s,;]+"), r"\1[REDACTED]"),
+        (re.compile(r"(?i)(ticket=)[^&\s]+"), r"\1[REDACTED]"),
+        (
+            re.compile(r"(?i)((?:password|secret|refresh|token)\s*[:=]\s*)[^\s,;]+"),
+            r"\1[REDACTED]",
+        ),
+    )
+
+    def format(self, record):
+        message = super().format(record)
+        for pattern, replacement in self._patterns:
+            message = pattern.sub(replacement, message)
+        return message
 
 
 def default_data_dir():
@@ -29,7 +47,7 @@ def configure_logging(data_dir, config):
         encoding="utf-8",
     )
     handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+        RedactingFormatter("%(asctime)s %(levelname)s %(name)s %(message)s")
     )
     console = logging.StreamHandler()
     console.setFormatter(handler.formatter)

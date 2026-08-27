@@ -1,7 +1,10 @@
 from datetime import timedelta
+import logging
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 from .models import TaskRun
+
+logger = logging.getLogger(__name__)
 
 
 def run_once(
@@ -46,8 +49,16 @@ def run_once(
     try:
         result = function() or {}
     except Exception as exc:
+        logger.error(
+            "Async task failed task=%s run=%s exception=%s",
+            task_name,
+            run.pk,
+            type(exc).__name__,
+        )
         TaskRun.objects.filter(pk=run.pk).update(
-            status=TaskRun.Status.FAILED, error=str(exc), finished_at=timezone.now()
+            status=TaskRun.Status.FAILED,
+            error="Échec interne de la tâche. Consultez les logs serveur.",
+            finished_at=timezone.now(),
         )
         raise
     TaskRun.objects.filter(pk=run.pk).update(

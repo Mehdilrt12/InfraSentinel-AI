@@ -1,24 +1,43 @@
-# Évaluation ML
+# Évaluation du Machine Learning
 
-L'évaluation comporte deux niveaux distincts afin de ne pas inventer de qualité
-scientifique.
+## Ce qui est mesuré
 
-1. Lors du training, les fenêtres réelles sont triées dans le temps. Les 80 %
-   initiales servent à ajuster prétraitement, Isolation Forest et seuil; les 20 %
-   finales servent de holdout chronologique. Sont conservés le taux d'anomalie et
-   la distribution des scores de validation.
-2. `ml.evaluate` compare, sur une période donnée, les incidents issus des règles,
-   les anomalies ML et leurs recouvrements dans une fenêtre de 15 minutes. Il
-   mesure des volumes opérationnels, pas une exactitude supervisée.
+L'évaluation sépare performance statistique non supervisée et comparaison
+opérationnelle. Pendant le training, le holdout chronologique de 20 % mesure taux
+d'anomalie, distribution des scores et stabilité du seuil sans réentraîner sur le
+futur. La tâche `ml.evaluate` compare ensuite anomalies et incidents issus des
+règles dans une fenêtre de 15 minutes.
 
-Sans labels réels d'incident, `ground_truth_available=false`, `precision=null` et
-`recall=null`. Le projet ne produit donc ni précision, ni rappel, ni F1 inventés.
+| Mesure | Disponible | Interprétation |
+|---|---|---|
+| taux d'anomalie holdout | oui | fréquence des fenêtres au-dessus du seuil |
+| distribution des scores | oui | dérive/dispersion des scores |
+| overlap règles/anomalies | oui | concordance opérationnelle, pas vérité terrain |
+| précision/rappel/F1 | non sans labels | restent explicitement `null` |
+
+`ground_truth_available=false` empêche d'afficher une exactitude inventée. Des
+alertes basées sur seuils ne constituent pas automatiquement des labels scientifiques.
+
+## Reproduction
 
 ```powershell
 ./scripts/evaluate-ml.ps1 -CustomerId <uuid> -Days 30
+# ou
+./.venv/Scripts/python.exe backend/manage.py evaluate_ml --customer-id <uuid> --days 30
 ```
 
-La commande équivalente est `python manage.py evaluate_ml`. L'API
-`POST /api/ml/models/evaluate/` planifie la même logique via Celery et l'enregistre
-dans l'audit. Les fixtures synthétiques ne sont utilisées que dans les tests et y
-sont explicitement marquées comme telles.
+L'API `POST /api/ml/models/evaluate/` planifie la même logique via Celery et crée un
+événement d'audit. Conserver commit, version de modèle, paramètres, période, tenant,
+volume de fenêtres et indicateur synthétique avec tout rapport.
+
+## Protocole PFE recommandé
+
+1. Constituer un historique réel et documenter les périodes incomplètes.
+2. Faire annoter indépendamment les incidents par un administrateur.
+3. Geler train/validation/test dans le temps, sans fuite entre périodes.
+4. Comparer aux règles et à une baseline simple.
+5. Rapporter faux positifs, faux négatifs et intervalles, pas seulement une moyenne.
+
+Le dataset PFE synthétique sert à démontrer le flux UI/API; il n'est pas un résultat
+scientifique réel. Les tests vérifient les calculs et métadonnées, pas la capacité de
+généralisation sur une infrastructure inconnue.

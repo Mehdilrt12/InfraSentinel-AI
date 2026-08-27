@@ -1,6 +1,10 @@
+import ipaddress
+import json
 import re
 from urllib.parse import urlparse
+from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from accounts.models import Customer, User
 from async_tasks.models import GeneratedReport, TaskRun
@@ -27,7 +31,11 @@ class CustomerSerializer(serializers.ModelSerializer):
 
 class UserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(
-        write_only=True, required=False, validators=[validate_password]
+        write_only=True,
+        required=False,
+        max_length=128,
+        trim_whitespace=False,
+        validators=[validate_password],
     )
 
     class Meta:
@@ -41,9 +49,19 @@ class UserSerializer(serializers.ModelSerializer):
             "role",
             "customer",
             "is_active",
+            "is_superuser",
             "password",
         ]
-        read_only_fields = ["id", "customer"]
+        read_only_fields = ["id", "customer", "is_superuser"]
+
+    def validate_email(self, value):
+        value = value.strip().lower()
+        existing = User.objects.filter(email=value)
+        if self.instance:
+            existing = existing.exclude(pk=self.instance.pk)
+        if existing.exists():
+            raise serializers.ValidationError("Cette adresse email existe déjà.")
+        return value
 
     def create(self, validated_data):
         password = validated_data.pop("password", None)
@@ -164,6 +182,9 @@ class ConnectorSerializer(TenantRelationSerializer):
         timeout = attrs.get(
             "timeout_seconds", getattr(self.instance, "timeout_seconds", 30)
         )
+        verify_tls = attrs.get(
+            "verify_tls", getattr(self.instance, "verify_tls", True)
+        )
         if environment and environment.kind not in {kind, Environment.Kind.MIXED}:
             raise serializers.ValidationError(
                 {
@@ -178,18 +199,101 @@ class ConnectorSerializer(TenantRelationSerializer):
             )
         if kind == IntegrationEndpoint.Kind.VMWARE:
             parsed = urlparse(endpoint)
-            if parsed.scheme != "https" or not parsed.hostname:
+            if (
+                parsed.scheme != "https"
+                or not parsed.hostname
+                or parsed.username
+                or parsed.password
+                or parsed.query
+                or parsed.fragment
+            ):
                 raise serializers.ValidationError(
-                    {"endpoint": "Une URL vCenter HTTPS complète est obligatoire."}
+                    {
+                        "endpoint": "Une URL vCenter HTTPS sans identifiants, paramètres ni fragment est obligatoire."
+                    }
+                )
+            self._validate_target(parsed.hostname)
+            if not verify_tls and not settings.ALLOW_INSECURE_CONNECTOR_TLS:
+                raise serializers.ValidationError(
+                    {
+                        "verify_tls": "La désactivation TLS doit être autorisée explicitement côté serveur."
+                    }
                 )
         elif kind == IntegrationEndpoint.Kind.HYPERV and (
-            not endpoint or "://" in endpoint
+            not endpoint
+            or "://" in endpoint
+            or not re.fullmatch(r"[A-Za-z0-9_.:\-\[\]]+", endpoint)
         ):
             raise serializers.ValidationError(
                 {"endpoint": "Utilisez un nom DNS ou une adresse d'hôte Hyper-V."}
             )
+        elif kind == IntegrationEndpoint.Kind.HYPERV:
+            self._validate_target(endpoint)
+        config = attrs.get("config", getattr(self.instance, "config", {}))
+        self._validate_public_config(config)
         attrs["endpoint"] = endpoint
         return attrs
+
+    @staticmethod
+    def _validate_target(host):
+        normalized = str(host).strip().rstrip(".").lower()
+        if normalized in {"localhost", "localhost.localdomain"}:
+            raise serializers.ValidationError(
+                {"endpoint": "Les cibles loopback sont interdites."}
+            )
+        try:
+            address = ipaddress.ip_address(normalized.strip("[]"))
+        except ValueError:
+            address = None
+        if address and (
+            address.is_loopback
+            or address.is_link_local
+            or address.is_multicast
+            or address.is_unspecified
+        ):
+            raise serializers.ValidationError(
+                {"endpoint": "Cette classe d'adresse réseau est interdite."}
+            )
+        allowed = settings.CONNECTOR_ALLOWED_HOSTS
+        if allowed and not any(
+            normalized == item.lower().rstrip(".")
+            or (
+                item.startswith("*.")
+                and normalized.endswith(item[1:].lower().rstrip("."))
+            )
+            for item in allowed
+        ):
+            raise serializers.ValidationError(
+                {"endpoint": "La cible n'appartient pas à l'allowlist des connecteurs."}
+            )
+
+    @classmethod
+    def _validate_public_config(cls, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError({"config": "Un objet JSON est attendu."})
+        if len(json.dumps(value, separators=(",", ":"), ensure_ascii=False)) > 16_384:
+            raise serializers.ValidationError({"config": "Configuration trop volumineuse."})
+        forbidden = re.compile(r"(?i)(password|passwd|secret|token|credential|api.?key)")
+
+        def walk(item, depth=0):
+            if depth > 8:
+                raise serializers.ValidationError(
+                    {"config": "Imbrication JSON excessive."}
+                )
+            if isinstance(item, dict):
+                for key, nested in item.items():
+                    if forbidden.search(str(key)):
+                        raise serializers.ValidationError(
+                            {
+                                "config": "Aucun secret ne doit être stocké dans config; utilisez secret_ref."
+                            }
+                        )
+                    walk(nested, depth + 1)
+            elif isinstance(item, list):
+                for nested in item:
+                    walk(nested, depth + 1)
+
+        walk(value)
 
 
 class VirtualAssetSerializer(serializers.ModelSerializer):
@@ -333,10 +437,41 @@ class CollectionRunSerializer(serializers.ModelSerializer):
 
 
 class AuditLogSerializer(serializers.ModelSerializer):
+    actor_email = serializers.EmailField(read_only=True)
+    customer_name = serializers.CharField(source="customer.name", read_only=True)
+    timestamp = serializers.DateTimeField(read_only=True)
+    created_at = serializers.DateTimeField(source="timestamp", read_only=True)
+    context = serializers.JSONField(source="metadata", read_only=True)
+    target = serializers.SerializerMethodField()
+
     class Meta:
         model = AuditLog
-        fields = "__all__"
-        read_only_fields = [field.name for field in AuditLog._meta.fields]
+        fields = [
+            "id",
+            "customer",
+            "customer_name",
+            "actor",
+            "actor_email",
+            "action",
+            "target",
+            "target_type",
+            "target_id",
+            "target_repr",
+            "timestamp",
+            "created_at",
+            "ip_address",
+            "metadata",
+            "context",
+        ]
+        read_only_fields = fields
+
+    @extend_schema_field(serializers.DictField(child=serializers.CharField()))
+    def get_target(self, obj):
+        return {
+            "type": obj.target_type,
+            "id": obj.target_id,
+            "repr": obj.target_repr,
+        }
 
 
 class TaskRunSerializer(serializers.ModelSerializer):

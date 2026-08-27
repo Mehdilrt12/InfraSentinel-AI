@@ -2,7 +2,8 @@ import hashlib
 from django.db import transaction
 from django.utils import timezone
 from inventory.models import Machine
-from .models import Alert, Recommendation
+from .audit import record_audit
+from .models import Alert, AuditLog, Recommendation
 from .recommendations import build_recommendation
 
 SEVERITY_ORDER = {"INFO": 0, "WARNING": 1, "HIGH": 2, "CRITICAL": 3}
@@ -75,6 +76,17 @@ def create_or_update_alert(
             dedup_key=dedup_key,
         )
         Recommendation.objects.create(alert=alert, **rec)
+        record_audit(
+            AuditLog.Action.ALERT_CREATED,
+            customer=machine.customer,
+            target=alert,
+            metadata={
+                "machine_id": str(machine.pk),
+                "severity": severity,
+                "source": source,
+                "type": alert_type,
+            },
+        )
 
     if changed:
         from realtime.publisher import publish
@@ -122,6 +134,12 @@ def resolve_open_alert(machine, alert_type, source_key, reason="condition_cleare
     alert.last_seen_at = timezone.now()
     alert.context = {**alert.context, "resolution_reason": reason}
     alert.save(update_fields=["status", "last_seen_at", "context", "updated_at"])
+    record_audit(
+        AuditLog.Action.ALERT_RESOLVED,
+        customer=machine.customer,
+        target=alert,
+        metadata={"machine_id": str(machine.pk), "reason": reason, "actor": "system"},
+    )
     from realtime.publisher import publish
 
     publish(
@@ -167,6 +185,16 @@ def resolve_machine_alerts(machine, alert_type, reason="machine_recovered"):
             alert.context = {**alert.context, "resolution_reason": reason}
             alert.save(
                 update_fields=["status", "last_seen_at", "context", "updated_at"]
+            )
+            record_audit(
+                AuditLog.Action.ALERT_RESOLVED,
+                customer=machine.customer,
+                target=alert,
+                metadata={
+                    "machine_id": str(machine.pk),
+                    "reason": reason,
+                    "actor": "system",
+                },
             )
             from realtime.publisher import publish
 

@@ -50,11 +50,12 @@ def _timestamp(value):
     if value is None:
         return datetime.now(dt_timezone.utc)
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=dt_timezone.utc)
-    parsed = parse_datetime(str(value))
-    if parsed is None:
-        raise ValidationError({"timestamp": "Horodatage ISO-8601 invalide."})
-    result = parsed if parsed.tzinfo else parsed.replace(tzinfo=dt_timezone.utc)
+        result = value if value.tzinfo else value.replace(tzinfo=dt_timezone.utc)
+    else:
+        parsed = parse_datetime(str(value))
+        if parsed is None:
+            raise ValidationError({"timestamp": "Horodatage ISO-8601 invalide."})
+        result = parsed if parsed.tzinfo else parsed.replace(tzinfo=dt_timezone.utc)
     if result > datetime.now(dt_timezone.utc) + timedelta(minutes=5):
         raise ValidationError(
             {"timestamp": "Un horodatage situé dans le futur est refusé."}
@@ -102,7 +103,9 @@ def normalize_metric(raw, *, source_type, environment, machine, customer):
             raise ValidationError(
                 {"metric_value": "La valeur doit être un nombre fini."}
             )
-    raw_metadata = raw.get("metadata") or {}
+    raw_metadata = raw.get("metadata")
+    if raw_metadata is None:
+        raw_metadata = {}
     if not isinstance(raw_metadata, dict):
         raise ValidationError({"metadata": "Un objet JSON est attendu."})
     metadata = dict(raw_metadata)

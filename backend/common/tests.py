@@ -31,6 +31,8 @@ from realtime.models import RealtimeEvent
 from realtime.tickets import issue_ticket
 from vmware_connector.collector import VMwareCollectionError
 
+WS_HEADERS = [(b"origin", b"http://127.0.0.1:5173")]
+
 
 class BaseData(TestCase):
     def setUp(self):
@@ -84,6 +86,7 @@ class TenantApiTests(BaseData):
                 "external_id": "bad",
                 "hostname": "bad",
             },
+            format="json",
         )
         self.assertEqual(response.status_code, 400)
 
@@ -98,7 +101,8 @@ class TenantApiTests(BaseData):
                     "machine_id": str(self.other_machine.pk),
                     "metrics": [{"metric_name": "cpu", "metric_value": 1}],
                 },
-                HTTP_AUTHORIZATION="Bearer raw",
+                format="json",
+                HTTP_AUTHORIZATION=f"Bearer {'a' * 64}",
             )
         self.assertEqual(response.status_code, 403)
 
@@ -463,12 +467,16 @@ class RealtimeSecurityTests(TransactionTestCase):
 
         async def scenario():
             communicator = WebsocketCommunicator(
-                application, f"/ws/events/?ticket={ticket}&since=0"
+                application,
+                f"/ws/events/?ticket={ticket}&since=0",
+                headers=WS_HEADERS,
             )
             connected, _ = await communicator.connect()
             self.assertTrue(connected)
             await communicator.disconnect()
-            bad = WebsocketCommunicator(application, "/ws/events/?ticket=invalid")
+            bad = WebsocketCommunicator(
+                application, "/ws/events/?ticket=invalid", headers=WS_HEADERS
+            )
             connected_bad, code = await bad.connect()
             self.assertFalse(connected_bad)
             self.assertEqual(code, 4401)
@@ -489,17 +497,22 @@ class RealtimeSecurityTests(TransactionTestCase):
             payload={"severity": "CRITICAL"},
         )
         ticket = issue_ticket(self.user)
+        reconnect_ticket = issue_ticket(self.user)
 
         async def scenario():
             initial = WebsocketCommunicator(
-                application, f"/ws/events/?ticket={ticket}&since={second.sequence}"
+                application,
+                f"/ws/events/?ticket={ticket}&since={second.sequence}",
+                headers=WS_HEADERS,
             )
             connected, _ = await initial.connect()
             self.assertTrue(connected)
             await initial.disconnect()
 
             reconnected = WebsocketCommunicator(
-                application, f"/ws/events/?ticket={ticket}&since={first.sequence}"
+                application,
+                f"/ws/events/?ticket={reconnect_ticket}&since={first.sequence}",
+                headers=WS_HEADERS,
             )
             connected_again, _ = await reconnected.connect()
             self.assertTrue(connected_again)
@@ -511,14 +524,19 @@ class RealtimeSecurityTests(TransactionTestCase):
         async_to_sync(scenario)()
 
     def test_multiple_clients_and_independent_disconnect(self):
-        ticket = issue_ticket(self.user)
+        first_ticket = issue_ticket(self.user)
+        second_ticket = issue_ticket(self.user)
 
         async def scenario():
             first = WebsocketCommunicator(
-                application, f"/ws/events/?ticket={ticket}&since=0"
+                application,
+                f"/ws/events/?ticket={first_ticket}&since=0",
+                headers=WS_HEADERS,
             )
             second = WebsocketCommunicator(
-                application, f"/ws/events/?ticket={ticket}&since=0"
+                application,
+                f"/ws/events/?ticket={second_ticket}&since=0",
+                headers=WS_HEADERS,
             )
             self.assertTrue((await first.connect())[0])
             self.assertTrue((await second.connect())[0])
@@ -551,7 +569,9 @@ class RealtimeSecurityTests(TransactionTestCase):
 
         async def scenario():
             communicator = WebsocketCommunicator(
-                application, f"/ws/events/?ticket={ticket}&since=invalid"
+                application,
+                f"/ws/events/?ticket={ticket}&since=invalid",
+                headers=WS_HEADERS,
             )
             connected, code = await communicator.connect()
             self.assertFalse(connected)

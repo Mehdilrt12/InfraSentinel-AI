@@ -1,21 +1,38 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
-import { api } from './api'
+import { api, loginBrowser, logoutBrowser, refreshBrowserSession, setAccessToken } from './api'
 
 const AuthContext = createContext(null)
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
-  const [loading, setLoading] = useState(Boolean(localStorage.getItem('access_token')))
+  const [loading, setLoading] = useState(true)
   useEffect(() => {
-    if (!localStorage.getItem('access_token')) return setLoading(false)
-    api.get('/auth/me/').then(({ data }) => setUser(data)).catch(() => { localStorage.removeItem('access_token'); localStorage.removeItem('refresh_token') }).finally(() => setLoading(false))
+    refreshBrowserSession()
+      .then(() => api.get('/auth/me/'))
+      .then(({ data }) => setUser(data))
+      .catch(() => { setAccessToken(null); setUser(null) })
+      .finally(() => setLoading(false))
   }, [])
-  const value = useMemo(() => ({ user, loading, async login(email, password) { const { data } = await api.post('/auth/token/', { email, password }); localStorage.setItem('access_token', data.access); localStorage.setItem('refresh_token', data.refresh); const me = await api.get('/auth/me/'); setUser(me.data) }, async logout() { const refresh = localStorage.getItem('refresh_token'); try { if (refresh) await api.post('/auth/logout/', { refresh }) } finally { localStorage.removeItem('access_token'); localStorage.removeItem('refresh_token'); setUser(null) } } }), [user, loading])
+  const value = useMemo(() => ({
+    user,
+    loading,
+    async login(email, password) {
+      await loginBrowser(email, password)
+      const me = await api.get('/auth/me/')
+      setUser(me.data)
+    },
+    async logout() {
+      try { await logoutBrowser() } finally { setUser(null) }
+    },
+  }), [user, loading])
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 
 export function useAuth() { return useContext(AuthContext) }
+
+export const isManager = (user) => Boolean(user?.is_superuser || ['ADMIN', 'SUPERVISOR'].includes(user?.role))
+export const isAdministrator = (user) => Boolean(user?.is_superuser || user?.role === 'ADMIN')
 
 export function Protected({ children }) {
   const { user, loading } = useAuth()

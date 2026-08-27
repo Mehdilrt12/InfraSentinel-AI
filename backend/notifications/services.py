@@ -135,6 +135,17 @@ def deliver_notification(delivery_id):
             raise RuntimeError(f"Canal {delivery.preference.channel} non implémenté.")
         provider_id = adapter.send(delivery)
     except Exception as exc:
+        public_error = (
+            f"Canal {delivery.preference.channel} non implémenté."
+            if not adapter
+            else "Échec d'envoi de la notification. Consultez les logs serveur."
+        )
+        logger.error(
+            "Notification delivery failed delivery=%s channel=%s exception=%s",
+            delivery.pk,
+            delivery.preference.channel,
+            type(exc).__name__,
+        )
         delay = min(3600, 30 * (2 ** min(delivery.attempts, 7)))
         retrying = delivery.attempts < 8
         NotificationDelivery.objects.filter(pk=delivery.pk).update(
@@ -144,7 +155,7 @@ def deliver_notification(delivery_id):
                 else NotificationDelivery.Status.FAILED
             ),
             next_attempt_at=now + timedelta(seconds=delay),
-            last_error=str(exc),
+            last_error=public_error,
             updated_at=timezone.now(),
         )
         return "RETRY" if retrying else "FAILED"

@@ -1,0 +1,29 @@
+[run]
+branch = True
+source =
+    accounts
+    async_tasks
+    common
+    config
+    integrations
+    inventory
+    metrics
+    ml_engine
+    monitoring
+    notifications
+    realtime
+    vmware_connector
+    hyperv_connector
+omit =
+    */migrations/*
+    */tests/*
+    */common/test*.py
+    */common/testing.py
+
+[report]
+show_missing = True
+skip_empty = True
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError

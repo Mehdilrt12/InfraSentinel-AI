@@ -1,7 +1,7 @@
 import { Activity, AlertTriangle, Bell, Bot, Boxes, BrainCircuit, Cable, ChevronRight, CircleGauge, CloudCog, Cpu, LogOut, Menu, Monitor, Server, Settings, ShieldCheck, Users, X } from 'lucide-react'
 import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
-import { useAuth } from './auth'
+import { isAdministrator, isManager, useAuth } from './auth'
 import { useRealtime } from './realtime'
 
 const navigation = [
@@ -15,13 +15,18 @@ export function Layout() {
   const [open, setOpen] = useState(false)
   const { user, logout } = useAuth()
   const realtime = useRealtime()
+  const visibleNavigation = navigation.filter(([path]) => {
+    if (path === '/users') return isAdministrator(user)
+    if (path === '/settings' || path === '/audit') return isManager(user)
+    return true
+  })
   return <div className="shell">
     <aside className={`sidebar ${open ? 'open' : ''}`}>
-      <div className="brand"><span className="brand-mark"><Activity /></span><span>InfraSentinel <small>AI</small></span><button className="mobile-close" onClick={() => setOpen(false)}><X /></button></div>
-      <nav>{navigation.map(([path, Icon, label]) => <NavLink key={path} to={path} onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'active' : ''}><Icon />{label}<ChevronRight className="chevron" /></NavLink>)}</nav>
+      <div className="brand"><span className="brand-mark"><Activity /></span><span>InfraSentinel <small>AI</small></span><button className="mobile-close" aria-label="Fermer le menu" onClick={() => setOpen(false)}><X /></button></div>
+      <nav>{visibleNavigation.map(([path, Icon, label]) => <NavLink key={path} to={path} onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'active' : ''}><Icon />{label}<ChevronRight className="chevron" /></NavLink>)}</nav>
       <div className="sidebar-foot"><div className="avatar">{user?.email?.[0]?.toUpperCase()}</div><div><strong>{user?.first_name || user?.username}</strong><small>{user?.role}</small></div><button title="Se déconnecter" onClick={logout}><LogOut /></button></div>
     </aside>
-    <main className="main"><header className="topbar"><button className="menu" onClick={() => setOpen(true)}><Menu /></button><div className={`live ${realtime.status}`}><span />{realtime.status === 'live' ? 'Temps réel' : realtime.status === 'polling' ? 'Polling de secours' : realtime.status === 'connecting' ? 'Connexion…' : 'Hors ligne'}</div><div className="tenant"><Server />{user?.customer ? 'Espace client' : 'Administration globale'}</div></header><Outlet /></main>
+    <main className="main"><header className="topbar"><button className="menu" aria-label="Ouvrir le menu" onClick={() => setOpen(true)}><Menu /></button><div className={`live ${realtime.status}`}><span />{realtime.status === 'live' ? 'Temps réel' : realtime.status === 'polling' ? 'Polling de secours' : realtime.status === 'connecting' ? 'Connexion…' : 'Hors ligne'}</div><div className="tenant"><Server />{user?.customer ? 'Espace client' : 'Administration globale'}</div></header><Outlet /></main>
   </div>
 }
 
@@ -43,4 +48,3 @@ export function Table({ columns, rows, rowKey = 'id', onRow }) {
 }
 
 export const formatNumber = (value, digits = 0) => value == null ? '—' : new Intl.NumberFormat('fr-FR', { maximumFractionDigits: digits }).format(value)
-

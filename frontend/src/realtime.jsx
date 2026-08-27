@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { api } from './api'
+import { api, hasAccessToken } from './api'
 import { useAuth } from './auth'
 
 const RealtimeContext = createContext({ status: 'offline', revision: 0 })
@@ -7,7 +7,7 @@ const POLL_MS = Number(import.meta.env.VITE_POLL_INTERVAL_MS || 30000)
 
 function wsBase() {
   if (import.meta.env.VITE_WS_URL) return import.meta.env.VITE_WS_URL
-  const apiUrl = new URL(api.defaults.baseURL)
+  const apiUrl = new URL(api.defaults.baseURL, window.location.origin)
   apiUrl.protocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:'
   apiUrl.pathname = '/ws/events/'
   return apiUrl.toString()
@@ -25,11 +25,11 @@ export function RealtimeProvider({ children }) {
   const mounted = useRef(true)
   const connect = useCallback(async () => {
     if (!mounted.current || socket.current?.readyState === WebSocket.CONNECTING || socket.current?.readyState === WebSocket.OPEN) return
-    if (!navigator.onLine || !localStorage.getItem('access_token')) return setStatus('offline')
+    if (!navigator.onLine || !hasAccessToken()) return setStatus('offline')
     try {
       setStatus('connecting')
       const { data } = await api.post('/realtime/ticket/')
-      const url = new URL(wsBase())
+      const url = new URL(wsBase(), window.location.origin)
       url.searchParams.set('ticket', data.ticket)
       url.searchParams.set('since', lastSequence.current)
       const ws = new WebSocket(url)

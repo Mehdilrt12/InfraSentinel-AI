@@ -32,9 +32,14 @@ class AgentClient:
                 headers=headers,
                 timeout=self.config.request_timeout_seconds,
                 verify=self.config.verify_tls,
+                allow_redirects=False,
             )
         except requests.RequestException as exc:
             raise AgentAPIError(f"Serveur indisponible: {exc}") from exc
+        if 300 <= response.status_code < 400:
+            raise AgentAPIError(
+                "Redirection serveur refusée.", response.status_code, retryable=False
+            )
         if response.status_code in {401, 403}:
             raise AgentAPIError(
                 "Authentification agent refusée.", response.status_code, retryable=False

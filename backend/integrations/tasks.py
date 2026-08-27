@@ -1,6 +1,8 @@
 from datetime import datetime, timezone as dt_timezone
+import logging
 from celery import shared_task
 from django.utils import timezone
+from django.conf import settings
 from async_tasks.idempotency import run_once
 from inventory.models import IntegrationEndpoint
 from vmware_connector.collector import (
@@ -15,10 +17,28 @@ from hyperv_connector.collector import (
 )
 from .models import CollectionRun
 from .services import persist_collection
+from common.serializers import ConnectorSerializer
+
+logger = logging.getLogger(__name__)
 
 
 def _bucket():
     return datetime.now(dt_timezone.utc).strftime("%Y%m%d%H%M")[:-1]
+
+
+def _validate_connector_runtime(connector):
+    if connector.kind == IntegrationEndpoint.Kind.VMWARE:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(connector.endpoint)
+        if parsed.scheme != "https" or not parsed.hostname:
+            raise VMwareCollectionError("Configuration vCenter refusée.")
+        ConnectorSerializer._validate_target(parsed.hostname)
+        if not connector.verify_tls and not settings.ALLOW_INSECURE_CONNECTOR_TLS:
+            raise VMwareCollectionError("Vérification TLS vCenter obligatoire.")
+    else:
+        ConnectorSerializer._validate_target(connector.endpoint)
+    ConnectorSerializer._validate_public_config(connector.config)
 
 
 def _collect(connector, collector):
@@ -28,11 +48,18 @@ def _collect(connector, collector):
     try:
         result = persist_collection(connector, collector.collect())
     except Exception as exc:
+        public_error = f"Échec de collecte {connector.kind}. Consultez les logs serveur."
+        logger.error(
+            "Connector collection failed connector=%s kind=%s exception=%s",
+            connector.pk,
+            connector.kind,
+            type(exc).__name__,
+        )
         run.status = CollectionRun.Status.FAILED
-        run.error = str(exc)
+        run.error = public_error
         run.finished_at = timezone.now()
         run.save()
-        connector.last_error = str(exc)
+        connector.last_error = public_error
         connector.save(update_fields=["last_error"])
         raise
     run.status = CollectionRun.Status.SUCCESS
@@ -64,11 +91,15 @@ def collect_vmware_connector(self, connector_id, idempotency_key=None):
         connector.verify_tls,
         connector.timeout_seconds,
     )
+    def execute():
+        _validate_connector_runtime(connector)
+        return _collect(connector, VMwareCollector(config))
+
     return run_once(
         "integrations.collect_vmware_connector",
         idempotency_key or f"{connector_id}:{_bucket()}",
         self.request.id,
-        lambda: _collect(connector, VMwareCollector(config)),
+        execute,
         customer_id=connector.customer_id,
     )
 
@@ -91,11 +122,15 @@ def collect_hyperv_connector(self, connector_id, idempotency_key=None):
         connector.secret_ref,
         connector.timeout_seconds,
     )
+    def execute():
+        _validate_connector_runtime(connector)
+        return _collect(connector, HyperVCollector(config))
+
     return run_once(
         "integrations.collect_hyperv_connector",
         idempotency_key or f"{connector_id}:{_bucket()}",
         self.request.id,
-        lambda: _collect(connector, HyperVCollector(config)),
+        execute,
         customer_id=connector.customer_id,
     )
 

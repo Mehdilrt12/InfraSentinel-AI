@@ -118,12 +118,12 @@ class TenantAndConnectorReviewTests(ReviewBase):
             "username": "svc",
             "secret_ref": "POSTGRES_PASSWORD",
         }
-        rejected = self.client.post("/api/connectors/", payload)
+        rejected = self.client.post("/api/connectors/", payload, format="json")
         self.assertEqual(rejected.status_code, 400)
         payload["secret_ref"] = (
             f"INFRASENTINEL_CUSTOMER_{self.customer.pk.hex.upper()}_VCENTER_PASSWORD"
         )
-        accepted = self.client.post("/api/connectors/", payload)
+        accepted = self.client.post("/api/connectors/", payload, format="json")
         self.assertEqual(accepted.status_code, 201, accepted.data)
         self.assertNotIn("secret_ref", accepted.data)
 
@@ -136,7 +136,7 @@ class TenantAndConnectorReviewTests(ReviewBase):
             "username": "svc",
             "secret_ref": f"INFRASENTINEL_CUSTOMER_{self.customer.pk.hex.upper()}_VC",
         }
-        response = self.client.post("/api/connectors/", payload)
+        response = self.client.post("/api/connectors/", payload, format="json")
         self.assertEqual(response.status_code, 400)
 
 
@@ -160,7 +160,7 @@ class AgentApiReviewTests(ReviewBase):
         token = enrolled.data["token"]
         headers = {"HTTP_X_AGENT_TOKEN": token}
         heartbeat = anonymous.post(
-            "/api/agent/heartbeat/", {"version": "2.0.1"}, **headers
+            "/api/agent/heartbeat/", {"version": "2.0.1"}, format="json", **headers
         )
         self.assertEqual(heartbeat.status_code, 200)
         ingested = anonymous.post(
@@ -415,7 +415,7 @@ class HyperVCollectorReviewTests(TestCase):
     @patch("hyperv_connector.collector.subprocess.run")
     def test_powershell_failure_and_invalid_json_are_explicit(self, run):
         run.return_value = Mock(returncode=1, stdout="", stderr="permission denied")
-        with self.assertRaisesRegex(HyperVCollectionError, "permission denied"):
+        with self.assertRaisesRegex(HyperVCollectionError, "code 1"):
             HyperVCollector(HyperVConfig("hv01")).collect()
         run.return_value = Mock(returncode=0, stdout="not-json", stderr="")
         with self.assertRaisesRegex(HyperVCollectionError, "JSON valide"):
@@ -457,7 +457,11 @@ class MLReviewTests(ReviewBase):
             tempfile.TemporaryDirectory() as directory,
             patch("ml_engine.pipeline.MODEL_DIR", Path(directory)),
         ):
-            result = train_customer_model(self.customer.pk, days=2)
+            result = train_customer_model(
+                self.customer.pk,
+                days=2,
+                dataset_metadata={"synthetic": True, "demo_suite": "tests"},
+            )
             model = MLModelVersion.objects.get(pk=result["model_id"])
             self.assertEqual(
                 model.evaluation_metrics["method"], "chronological_holdout"
@@ -466,6 +470,8 @@ class MLReviewTests(ReviewBase):
             self.assertIsNone(model.evaluation_metrics["precision"])
             self.assertEqual(model.dataset["training_rows"], 20)
             self.assertEqual(model.dataset["validation_rows"], 5)
+            self.assertTrue(model.dataset["synthetic"])
+            self.assertEqual(model.dataset["demo_suite"], "tests")
             self.assertFalse(Path(model.artifact_path).is_absolute())
             self.assertTrue((Path(directory) / model.artifact_path).is_file())
 

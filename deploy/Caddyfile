@@ -1,0 +1,23 @@
+{
+	admin off
+	email {$ACME_EMAIL}
+}
+
+{$APP_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+
+	reverse_proxy frontend:8080
+
+	log {
+		output stdout
+		format json
+	}
+}

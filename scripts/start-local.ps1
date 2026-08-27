@@ -11,6 +11,7 @@ if ($occupied.Count -gt 0) { throw "Port(s) déjà utilisé(s) : $($occupied -jo
 $runtime = Join-Path $root 'runtime'
 New-Item -ItemType Directory -Path $runtime -Force | Out-Null
 & '.\.venv\Scripts\python.exe' backend\manage.py migrate --noinput
+& '.\.venv\Scripts\python.exe' backend\manage.py collectstatic --noinput
 $processes = @()
 $python = Join-Path $root '.venv\Scripts\python.exe'
 $api = Start-Process -FilePath $python -ArgumentList '-m','daphne','-b','127.0.0.1','-p','8000','config.asgi:application' -WorkingDirectory (Join-Path $root 'backend') -WindowStyle Hidden -PassThru

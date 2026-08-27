@@ -1,24 +1,79 @@
 import axios from 'axios'
 
-export const API_URL = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api').replace(/\/$/, '')
-export const api = axios.create({ baseURL: API_URL, timeout: 15000, headers: { Accept: 'application/json' } })
+// Same-origin is the safe release default. Local development may still override
+// it explicitly through frontend/.env without baking a loopback URL into a build.
+export const resolveApiUrl = (configuredUrl) => (configuredUrl || '/api').replace(/\/$/, '')
+export const API_URL = resolveApiUrl(import.meta.env.VITE_API_URL)
+
+let accessToken = null
+let csrfToken = null
+let refreshPromise = null
+
+export const api = axios.create({
+  baseURL: API_URL,
+  timeout: 15000,
+  withCredentials: true,
+  headers: { Accept: 'application/json' },
+})
+
+const browserAuth = axios.create({
+  baseURL: API_URL,
+  timeout: 15000,
+  withCredentials: true,
+  headers: { Accept: 'application/json' },
+})
+
+export function setAccessToken(token) { accessToken = token || null }
+export function hasAccessToken() { return Boolean(accessToken) }
+
+export async function ensureCsrfToken() {
+  if (csrfToken) return csrfToken
+  const { data } = await browserAuth.get('/auth/browser/csrf/')
+  csrfToken = data.csrf_token
+  return csrfToken
+}
+
+function csrfHeaders(token) { return { 'X-CSRFToken': token } }
+
+export async function loginBrowser(email, password) {
+  const csrf = await ensureCsrfToken()
+  const { data } = await browserAuth.post(
+    '/auth/browser/login/',
+    { email, password },
+    { headers: csrfHeaders(csrf) },
+  )
+  setAccessToken(data.access)
+  return data
+}
+
+export async function refreshBrowserSession() {
+  refreshPromise ||= ensureCsrfToken()
+    .then((csrf) => browserAuth.post('/auth/browser/refresh/', {}, { headers: csrfHeaders(csrf) }))
+    .then(({ data }) => { setAccessToken(data.access); return data.access })
+    .catch((error) => { setAccessToken(null); throw error })
+    .finally(() => { refreshPromise = null })
+  return refreshPromise
+}
+
+export async function logoutBrowser() {
+  try {
+    const csrf = await ensureCsrfToken()
+    await browserAuth.post('/auth/browser/logout/', {}, { headers: csrfHeaders(csrf) })
+  } finally {
+    setAccessToken(null)
+  }
+}
 
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('access_token')
-  if (token) config.headers.Authorization = `Bearer ${token}`
+  if (accessToken) config.headers.Authorization = `Bearer ${accessToken}`
   return config
 })
 
-let refreshPromise
 api.interceptors.response.use((response) => response, async (error) => {
   const original = error.config
-  if (error.response?.status !== 401 || original?._retried || !localStorage.getItem('refresh_token')) return Promise.reject(error)
+  if (error.response?.status !== 401 || original?._retried) return Promise.reject(error)
   original._retried = true
-  refreshPromise ||= axios.post(`${API_URL}/auth/refresh/`, { refresh: localStorage.getItem('refresh_token') })
-    .then(({ data }) => { localStorage.setItem('access_token', data.access); if (data.refresh) localStorage.setItem('refresh_token', data.refresh); return data.access })
-    .catch((refreshError) => { localStorage.removeItem('access_token'); localStorage.removeItem('refresh_token'); throw refreshError })
-    .finally(() => { refreshPromise = null })
-  const token = await refreshPromise
+  const token = await refreshBrowserSession()
   original.headers.Authorization = `Bearer ${token}`
   return api(original)
 })

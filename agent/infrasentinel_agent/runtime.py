@@ -77,7 +77,7 @@ class AgentRuntime:
                 )
             except AgentAPIError as exc:
                 logger.error(
-                    "Cycle agent échoué (%s, retryable=%s)",
+                    "Echec du cycle agent (%s, retryable=%s)",
                     exc.status_code,
                     exc.retryable,
                 )

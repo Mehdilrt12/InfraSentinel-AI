@@ -1,4 +1,5 @@
 import uuid
+from django.core.exceptions import ValidationError
 from django.db import models
 from accounts.models import Customer
 from inventory.models import Environment, Machine
@@ -172,6 +173,42 @@ class Recommendation(models.Model):
 
 
 class AuditLog(models.Model):
+    class Action(models.TextChoices):
+        USER_LOGIN = "USER_LOGIN", "Connexion utilisateur"
+        USER_LOGOUT = "USER_LOGOUT", "Déconnexion utilisateur"
+        USER_CREATED = "USER_CREATED", "Utilisateur créé"
+        USER_UPDATED = "USER_UPDATED", "Utilisateur modifié"
+        USER_DELETED = "USER_DELETED", "Utilisateur supprimé"
+        AGENT_ENROLLMENT_CODE_CREATED = (
+            "AGENT_ENROLLMENT_CODE_CREATED",
+            "Code d'enrôlement créé",
+        )
+        AGENT_ENROLLED = "AGENT_ENROLLED", "Agent enrôlé"
+        AGENT_REVOKED = "AGENT_REVOKED", "Agent révoqué"
+        AGENT_UPDATED = "AGENT_UPDATED", "Agent modifié"
+        MACHINE_CREATED = "MACHINE_CREATED", "Machine créée"
+        MACHINE_UPDATED = "MACHINE_UPDATED", "Machine modifiée"
+        MACHINE_DELETED = "MACHINE_DELETED", "Machine supprimée"
+        ALERT_CREATED = "ALERT_CREATED", "Alerte créée"
+        ALERT_UPDATED = "ALERT_UPDATED", "Alerte modifiée"
+        ALERT_ACKNOWLEDGED = "ALERT_ACKNOWLEDGED", "Alerte acquittée"
+        ALERT_IN_PROGRESS = "ALERT_IN_PROGRESS", "Alerte prise en charge"
+        ALERT_RESOLVED = "ALERT_RESOLVED", "Alerte résolue"
+        MODEL_TRAINING_QUEUED = (
+            "MODEL_TRAINING_QUEUED",
+            "Entraînement ML planifié",
+        )
+        MODEL_EVALUATION_QUEUED = (
+            "MODEL_EVALUATION_QUEUED",
+            "Évaluation ML planifiée",
+        )
+        MODEL_TRAINED = "MODEL_TRAINED", "Modèle entraîné"
+        CONNECTOR_COLLECTION_QUEUED = (
+            "CONNECTOR_COLLECTION_QUEUED",
+            "Collecte connecteur planifiée",
+        )
+        CONFIG_CHANGED = "CONFIG_CHANGED", "Configuration modifiée"
+
     customer = models.ForeignKey(
         Customer,
         null=True,
@@ -186,8 +223,40 @@ class AuditLog(models.Model):
         on_delete=models.SET_NULL,
         related_name="audit_logs",
     )
-    action = models.CharField(max_length=120)
+    actor_email = models.EmailField(blank=True, default="")
+    action = models.CharField(max_length=120, db_index=True)
     target_type = models.CharField(max_length=120, blank=True)
     target_id = models.CharField(max_length=120, blank=True)
-    context = models.JSONField(default=dict, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    target_repr = models.CharField(max_length=255, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True, db_index=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-timestamp", "-pk"]
+        default_permissions = ("add", "view")
+        indexes = [
+            models.Index(
+                fields=["customer", "timestamp"],
+                name="monitoring__custome_89ae5a_idx",
+            ),
+            models.Index(
+                fields=["customer", "action", "timestamp"],
+                name="monitoring__custome_1dfd79_idx",
+            ),
+            models.Index(
+                fields=["actor", "timestamp"],
+                name="monitoring__actor_i_033144_idx",
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError("Un journal d'audit est immuable.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Un journal d'audit ne peut pas être supprimé.")
+
+    def __str__(self):
+        return f"{self.timestamp.isoformat()} {self.action}"

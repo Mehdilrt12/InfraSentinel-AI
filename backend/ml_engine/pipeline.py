@@ -16,7 +16,8 @@ from sklearn.preprocessing import RobustScaler
 from accounts.models import Customer
 from metrics.models import NormalizedMetric
 from monitoring.alert_service import create_or_update_alert
-from monitoring.models import Anomaly
+from monitoring.audit import record_audit
+from monitoring.models import Anomaly, AuditLog
 from .models import MLModelVersion
 
 FEATURES = [
@@ -36,16 +37,17 @@ PARAMETERS = {
 MODEL_DIR = Path(settings.ML_MODEL_DIR)
 
 
-def dataset_for(customer, *, days=30):
+def dataset_for(customer, *, days=30, machine_ids=None):
     cutoff = timezone.now() - timedelta(days=days)
-    rows = list(
-        NormalizedMetric.objects.filter(
-            customer=customer,
-            metric_name__in=FEATURES,
-            timestamp__gte=cutoff,
-            metric_value__isnull=False,
-        ).values("machine_id", "timestamp", "metric_name", "metric_value")
+    metrics = NormalizedMetric.objects.filter(
+        customer=customer,
+        metric_name__in=FEATURES,
+        timestamp__gte=cutoff,
+        metric_value__isnull=False,
     )
+    if machine_ids is not None:
+        metrics = metrics.filter(machine_id__in=machine_ids)
+    rows = list(metrics.values("machine_id", "timestamp", "metric_name", "metric_value"))
     if not rows:
         return pd.DataFrame(columns=FEATURES)
     frame = pd.DataFrame(rows)
@@ -59,7 +61,7 @@ def dataset_for(customer, *, days=30):
     return pivot.reindex(columns=FEATURES).sort_index()
 
 
-def train_customer_model(customer_id, *, days=30):
+def train_customer_model(customer_id, *, days=30, dataset_metadata=None):
     customer = Customer.objects.get(pk=customer_id)
     data = dataset_for(customer, days=days)
     if len(data) < 20:
@@ -86,6 +88,7 @@ def train_customer_model(customer_id, *, days=30):
     temporary = target.with_suffix(".tmp")
     joblib.dump(pipeline, temporary)
     os.replace(temporary, target)
+    dataset_metadata = dataset_metadata or {}
     metadata = {
         "rows": len(data),
         "training_rows": len(training_data),
@@ -93,7 +96,8 @@ def train_customer_model(customer_id, *, days=30):
         "from": data.index.get_level_values("bucket").min().isoformat(),
         "to": data.index.get_level_values("bucket").max().isoformat(),
         "source": "NormalizedMetric",
-        "synthetic": False,
+        "synthetic": bool(dataset_metadata.get("synthetic", False)),
+        **dataset_metadata,
     }
     evaluation = {
         "method": "chronological_holdout",
@@ -131,6 +135,20 @@ def train_customer_model(customer_id, *, days=30):
                 status=MLModelVersion.Status.READY,
                 active=True,
             )
+            record_audit(
+                AuditLog.Action.MODEL_TRAINED,
+                customer=customer,
+                target=model,
+                metadata={
+                    "version": version_name,
+                    "algorithm": model.algorithm,
+                    "samples": len(data),
+                    "training_rows": len(training_data),
+                    "validation_rows": len(validation_data),
+                    "decision_threshold": threshold,
+                    "synthetic": metadata["synthetic"],
+                },
+            )
     except Exception:
         target.unlink(missing_ok=True)
         raise
@@ -142,7 +160,7 @@ def train_customer_model(customer_id, *, days=30):
     }
 
 
-def infer_customer(customer_id, *, days=1):
+def infer_customer(customer_id, *, days=1, machine_ids=None):
     customer = Customer.objects.get(pk=customer_id)
     model_version = (
         MLModelVersion.objects.filter(
@@ -153,7 +171,7 @@ def infer_customer(customer_id, *, days=1):
     )
     if not model_version:
         return {"anomalies": 0, "reason": "no_active_model"}
-    data = dataset_for(customer, days=days)
+    data = dataset_for(customer, days=days, machine_ids=machine_ids)
     if data.empty:
         return {"anomalies": 0, "reason": "no_recent_data"}
     artifact = Path(model_version.artifact_path)
@@ -177,7 +195,7 @@ def infer_customer(customer_id, *, days=1):
                 for key, value in data.loc[(machine_id, bucket)].to_dict().items()
             },
             "method": "Isolation Forest decision_function",
-            "synthetic": False,
+            "synthetic": bool(model_version.dataset.get("synthetic", False)),
         }
         anomaly, anomaly_created = Anomaly.objects.get_or_create(
             customer=customer,

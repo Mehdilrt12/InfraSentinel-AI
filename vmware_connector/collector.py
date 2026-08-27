@@ -56,7 +56,7 @@ class VMwareCollector:
             return self.si.RetrieveContent()
         except Exception as exc:
             raise VMwareCollectionError(
-                f"Connexion/authentification vCenter impossible: {exc}"
+                "Connexion/authentification vCenter impossible."
             ) from exc
 
     def close(self):

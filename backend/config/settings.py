@@ -52,6 +52,8 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "rest_framework",
     "rest_framework_simplejwt.token_blacklist",
+    "drf_spectacular",
+    "drf_spectacular_sidecar",
     "corsheaders",
     "channels",
     "accounts",
@@ -68,6 +70,8 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "common.middleware.APISecurityHeadersMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -130,6 +134,19 @@ TIME_ZONE = "Africa/Casablanca"
 USE_I18N = True
 USE_TZ = True
 STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+IS_TESTING = "test" in os.sys.argv
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {
+        "BACKEND": (
+            "django.contrib.staticfiles.storage.StaticFilesStorage"
+            if IS_TESTING
+            else "whitenoise.storage.CompressedManifestStaticFilesStorage"
+        )
+    },
+}
+WHITENOISE_USE_FINDERS = DEBUG or IS_TESTING
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 AUTH_USER_MODEL = "accounts.User"
 
@@ -138,7 +155,9 @@ REST_FRAMEWORK = {
         "rest_framework_simplejwt.authentication.JWTAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ),
-    "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
+    "DEFAULT_PERMISSION_CLASSES": ("common.permissions.IsActiveTenant",),
+    "DEFAULT_PARSER_CLASSES": ("rest_framework.parsers.JSONParser",),
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_THROTTLE_CLASSES": (
         "rest_framework.throttling.AnonRateThrottle",
         "rest_framework.throttling.UserRateThrottle",
@@ -148,7 +167,114 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "anon": "100/hour",
         "user": "2000/hour",
-        "agent_ingest": "600/min",
+        "auth_login_ip": os.getenv("AUTH_LOGIN_IP_RATE", "10/min"),
+        "auth_login_account": os.getenv("AUTH_LOGIN_ACCOUNT_RATE", "5/min"),
+        "registration": os.getenv("REGISTRATION_RATE", "5/hour"),
+        "agent_enrollment": os.getenv("AGENT_ENROLLMENT_RATE", "10/min"),
+        "agent_request": os.getenv("AGENT_REQUEST_RATE", "120/min"),
+    },
+    # Trust the socket peer by default. A production reverse proxy may set this to
+    # its exact hop count after it has stripped client-supplied forwarding headers.
+    "NUM_PROXIES": int(os.getenv("TRUSTED_PROXY_COUNT", "0")),
+}
+API_DOCS_PUBLIC = env_bool("API_DOCS_PUBLIC", DEBUG)
+PUBLIC_REGISTRATION_ENABLED = env_bool("PUBLIC_REGISTRATION_ENABLED", False)
+SPECTACULAR_SETTINGS = {
+    "TITLE": "InfraSentinel AI API",
+    "DESCRIPTION": (
+        "API centrale multi-tenant de supervision Windows, VMware et Hyper-V. "
+        "Les routes protegees utilisent un JWT Bearer ou une session Django; "
+        "les routes agent utilisent un jeton d'agent dedie."
+    ),
+    "VERSION": "2.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "SERVE_PUBLIC": True,
+    "SERVE_AUTHENTICATION": [] if API_DOCS_PUBLIC else None,
+    "SERVE_PERMISSIONS": (
+        ["rest_framework.permissions.AllowAny"]
+        if API_DOCS_PUBLIC
+        else ["common.permissions.IsAdmin"]
+    ),
+    "SCHEMA_PATH_PREFIX": r"/api",
+    "COMPONENT_SPLIT_REQUEST": True,
+    "SWAGGER_UI_DIST": "SIDECAR",
+    "SWAGGER_UI_FAVICON_HREF": "SIDECAR",
+    "SWAGGER_UI_SETTINGS": {
+        "deepLinking": True,
+        "displayOperationId": True,
+        "persistAuthorization": False,
+        "filter": True,
+    },
+    "ENUM_NAME_OVERRIDES": {
+        "EnvironmentTypeEnum": "inventory.models.Environment.Kind",
+        "IntegrationSourceEnum": "inventory.models.IntegrationEndpoint.Kind",
+        "VirtualAssetTypeEnum": "inventory.models.VirtualAsset.Kind",
+        "MonitoringSeverityEnum": "monitoring.models.Severity",
+        "AsyncExecutionStatusEnum": "async_tasks.models.TaskRun.Status",
+    },
+    "TAGS": [
+        {
+            "name": "Authentication",
+            "description": "Connexion, inscription et profil courant.",
+        },
+        {"name": "Users", "description": "Administration des comptes utilisateurs."},
+        {"name": "Customers", "description": "Administration des tenants clients."},
+        {
+            "name": "Environments",
+            "description": "Environnements Windows, VMware et Hyper-V.",
+        },
+        {
+            "name": "Agents",
+            "description": "Gestion, enrôlement et communications des agents Windows.",
+        },
+        {"name": "Machines", "description": "Inventaire centralisé des machines."},
+        {
+            "name": "Metrics",
+            "description": "Métriques normalisées et agrégats historiques.",
+        },
+        {"name": "Rules", "description": "Règles configurables de supervision."},
+        {"name": "Alerts", "description": "Alertes centralisées et cycle de vie."},
+        {"name": "Anomalies", "description": "Anomalies détectées par le moteur ML."},
+        {
+            "name": "Predictions",
+            "description": "Analyses de tendances fondées sur l'historique réel.",
+        },
+        {
+            "name": "ML",
+            "description": "Versions, entraînement et évaluation des modèles.",
+        },
+        {"name": "VMware", "description": "Connecteurs et inventaire VMware/vCenter."},
+        {
+            "name": "Hyper-V",
+            "description": "Connecteurs et inventaire Microsoft Hyper-V.",
+        },
+        {
+            "name": "Notifications",
+            "description": "Préférences et livraisons de notifications.",
+        },
+        {"name": "Dashboard", "description": "Synthèse opérationnelle multi-tenant."},
+        {
+            "name": "Realtime",
+            "description": "Tickets WebSocket et reprise d'événements.",
+        },
+        {
+            "name": "Operations",
+            "description": "Audit, collectes, tâches et rapports asynchrones.",
+        },
+        {"name": "System", "description": "État de santé de l'API."},
+    ],
+    "APPEND_COMPONENTS": {
+        "securitySchemes": {
+            "agentToken": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "X-Agent-Token",
+                "description": (
+                    "Jeton opaque retourné une seule fois lors de l'enrôlement. "
+                    "Authorization: Bearer <jeton> est également accepté par l'implémentation."
+                ),
+            }
+        }
     },
 }
 SIMPLE_JWT = {
@@ -156,9 +282,41 @@ SIMPLE_JWT = {
     "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
+    "ALGORITHM": "HS256",
+    "SIGNING_KEY": env_required("JWT_SIGNING_KEY"),
+    "AUDIENCE": os.getenv("JWT_AUDIENCE", "infrasentinel-clients"),
+    "ISSUER": os.getenv("JWT_ISSUER", "infrasentinel-api"),
+    "USER_AUTHENTICATION_RULE": "common.auth_api.active_user_authentication_rule",
 }
 
+JWT_REFRESH_COOKIE_NAME = os.getenv(
+    "JWT_REFRESH_COOKIE_NAME", "infrasentinel_refresh"
+)
+JWT_REFRESH_COOKIE_SECURE = env_bool("JWT_REFRESH_COOKIE_SECURE", not DEBUG)
+JWT_REFRESH_COOKIE_SAMESITE = os.getenv("JWT_REFRESH_COOKIE_SAMESITE", "Strict")
+JWT_REFRESH_COOKIE_PATH = "/api/auth/browser/"
+if JWT_REFRESH_COOKIE_SAMESITE not in {"Strict", "Lax", "None"}:
+    raise ImproperlyConfigured("JWT_REFRESH_COOKIE_SAMESITE est invalide.")
+if JWT_REFRESH_COOKIE_SAMESITE == "None" and not JWT_REFRESH_COOKIE_SECURE:
+    raise ImproperlyConfigured("SameSite=None exige un cookie refresh Secure.")
+
 REDIS_URL = env_required("REDIS_URL")
+if IS_TESTING:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "infrasentinel-tests",
+        }
+    }
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": os.getenv("CACHE_URL", REDIS_URL),
+            "KEY_PREFIX": "infrasentinel",
+            "TIMEOUT": 300,
+        }
+    }
 if os.getenv("CHANNEL_LAYER", "redis") == "memory" or "test" in os.sys.argv:
     CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
 else:
@@ -181,6 +339,9 @@ CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", "900"))
 CELERY_TASK_SOFT_TIME_LIMIT = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "840"))
 CELERY_TASK_TRACK_STARTED = True
 CELERY_RESULT_EXPIRES = 86400
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
 CELERY_TASK_ROUTES = {
     "integrations.collect_hyperv_connector": {"queue": "hyperv"},
 }
@@ -226,7 +387,8 @@ NOTIFICATION_SENDING_TIMEOUT_SECONDS = int(
 )
 ML_MODEL_DIR = os.getenv("ML_MODEL_DIR") or str(BASE_DIR / "model_store")
 
-SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+if env_bool("TRUST_X_FORWARDED_PROTO", False):
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SESSION_COOKIE_SECURE = env_bool("SESSION_COOKIE_SECURE", not DEBUG)
 CSRF_COOKIE_SECURE = env_bool("CSRF_COOKIE_SECURE", not DEBUG)
 SECURE_SSL_REDIRECT = env_bool("SECURE_SSL_REDIRECT", False)
@@ -234,13 +396,36 @@ SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "0"))
 SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool("SECURE_HSTS_INCLUDE_SUBDOMAINS", False)
 SECURE_HSTS_PRELOAD = env_bool("SECURE_HSTS_PRELOAD", False)
 SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "same-origin"
+SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin"
 X_FRAME_OPTIONS = "DENY"
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Strict"
+CSRF_COOKIE_SAMESITE = "Strict"
+DATA_UPLOAD_MAX_MEMORY_SIZE = int(
+    os.getenv("DATA_UPLOAD_MAX_MEMORY_SIZE", str(2_621_440))
+)
+FILE_UPLOAD_MAX_MEMORY_SIZE = int(
+    os.getenv("FILE_UPLOAD_MAX_MEMORY_SIZE", str(2_621_440))
+)
+
+CONNECTOR_ALLOWED_HOSTS = env_list("CONNECTOR_ALLOWED_HOSTS", "")
+ALLOW_INSECURE_CONNECTOR_TLS = env_bool("ALLOW_INSECURE_CONNECTOR_TLS", False)
+WEBSOCKET_SESSION_MAX_SECONDS = int(
+    os.getenv("WEBSOCKET_SESSION_MAX_SECONDS", "900")
+)
+if not 60 <= WEBSOCKET_SESSION_MAX_SECONDS <= 86_400:
+    raise ImproperlyConfigured("WEBSOCKET_SESSION_MAX_SECONDS doit valoir 60 à 86400.")
 
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
-        "standard": {"format": "{asctime} {levelname} {name} {message}", "style": "{"}
+        "standard": {
+            "()": "common.logging_utils.RedactingFormatter",
+            "format": "{asctime} {levelname} {name} {message}",
+            "style": "{",
+        }
     },
     "handlers": {
         "console": {"class": "logging.StreamHandler", "formatter": "standard"}

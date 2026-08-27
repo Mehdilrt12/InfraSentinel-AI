@@ -14,7 +14,7 @@ from .api import (
     DashboardView,
     EnvironmentViewSet,
     HealthView,
-    IntegrationOverviewView,
+    HyperVOverviewView,
     MLModelViewSet,
     MachineViewSet,
     MeView,
@@ -30,6 +30,7 @@ from .api import (
     TaskRunViewSet,
     UserViewSet,
     VirtualAssetViewSet,
+    VMwareOverviewView,
 )
 
 router = DefaultRouter()
@@ -73,6 +74,6 @@ urlpatterns = [
     path("agent/metrics/", AgentIngestView.as_view()),
     path("realtime/ticket/", RealtimeTicketView.as_view()),
     path("realtime/replay/", RealtimeReplayView.as_view()),
-    path("vmware/overview/", IntegrationOverviewView.as_view(), {"source": "VMWARE"}),
-    path("hyperv/overview/", IntegrationOverviewView.as_view(), {"source": "HYPERV"}),
+    path("vmware/overview/", VMwareOverviewView.as_view(), {"source": "VMWARE"}),
+    path("hyperv/overview/", HyperVOverviewView.as_view(), {"source": "HYPERV"}),
 ] + router.urls
