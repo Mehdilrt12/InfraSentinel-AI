@@ -8,15 +8,16 @@ les validations qui nécessitent encore une infrastructure externe.
 
 | Besoin | Document |
 |---|---|
-| Vérifier la release de soutenance | [validation finale](FINAL_VALIDATION_REPORT.md), [release finale](FINAL_RELEASE.md) |
+| Vérifier la release de soutenance | [validation locale finale](LOCAL_FINAL_VALIDATION_REPORT.md), [validation historique](FINAL_VALIDATION_REPORT.md), [release finale](FINAL_RELEASE.md) |
 | Comprendre le système | [Architecture](ARCHITECTURE.md), [base de données](DATABASE.md), [métriques](METRICS.md) |
+| Exploiter en local/LAN | [architecture du laboratoire](LOCAL_LAB_ARCHITECTURE.md) |
 | Utiliser l'API | [API/OpenAPI](API.md), [temps réel](REALTIME.md), [audit](AUDIT_LOGS.md) |
 | Exploiter la supervision | [règles](RULE_ENGINE.md), [alertes](ALERT_ENGINE.md), [recommandations](RECOMMENDATIONS.md), [notifications](NOTIFICATIONS.md) |
 | Comprendre l'IA/ML | [pipeline ML](ML.md), [évaluation](ML_EVALUATION.md), [analyse prédictive](PREDICTIVE_ANALYSIS.md) |
 | Déployer les collecteurs | [agent Windows](AGENT.md), [installateur](AGENT_INSTALLATION.md), [VMware](VMWARE.md), [Hyper-V](HYPERV.md) |
 | Déployer la plateforme | [tâches asynchrones](ASYNC_TASKS.md), [Docker](DOCKER.md), [déploiement](DEPLOYMENT.md), [sécurité](SECURITY_AUDIT.md) |
-| Préparer le staging Azure | [audit local](AZURE_PREDEPLOYMENT_AUDIT.md), [compte étudiant](AZURE_STUDENT_ACCOUNT_AUDIT.md), [décision d'architecture](AZURE_ARCHITECTURE_DECISION.md), [sécurité Azure](AZURE_SECURITY.md), [garde-fous de coût](AZURE_COST_GUARDRAILS.md) |
-| Préparer la soutenance | [performance](PERFORMANCE.md), [scénarios PFE](PFE_DEMO.md), [dashboard](DASHBOARD.md) |
+| Exploiter le laboratoire local | [architecture locale](LOCAL_LAB_ARCHITECTURE.md), [validation ML locale](LOCAL_ML_VALIDATION.md), [performance locale](LOCAL_PERFORMANCE_REPORT.md), [démonstration locale](LOCAL_PFE_DEMO.md) |
+| Préparer la soutenance | [performance locale](LOCAL_PERFORMANCE_REPORT.md), [validation ML locale](LOCAL_ML_VALIDATION.md), [scénario local](LOCAL_PFE_DEMO.md), [dashboard](DASHBOARD.md) |
 
 Les rapports [baseline](BASELINE.md), [reconstruction](RECONSTRUCTION_AUDIT.md) et
 [récupération des tests](TEST_RECOVERY_REPORT.md) sont historiques : les chiffres
@@ -42,8 +43,7 @@ limites sont rappelées dans les documents concernés.
 ### Docker
 
 ```powershell
-Copy-Item .env.example .env
-# Remplacer tous les marqueurs de secret, puis :
+./scripts/prepare-local-compose-env.ps1
 docker compose --env-file .env up --build
 docker compose --env-file .env ps
 ```

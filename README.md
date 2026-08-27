@@ -19,9 +19,10 @@ technique finale.
 
 ## Démarrage local
 
-1. Copier `.env.example` vers `.env`, `backend/.env.example` vers
-   `backend/.env` et `frontend/.env.example` vers `frontend/.env`, puis remplacer
-   les secrets d'exemple.
+1. Copier `backend/.env.example` vers `backend/.env` et
+   `frontend/.env.example` vers `frontend/.env`, puis remplacer les secrets
+   d'exemple. Exécuter `scripts/prepare-local-compose-env.ps1` pour préparer le
+   `.env` Docker sans afficher les secrets.
 2. Démarrer PostgreSQL et Redis avec `docker compose up -d db redis`.
 3. Exécuter `scripts/setup.ps1`, puis `scripts/start-local.ps1`.
 4. Ouvrir <http://127.0.0.1:5173>.
@@ -30,8 +31,8 @@ SQLite reste disponible comme chemin de compatibilité/import avec
 `DATABASE_ENGINE=sqlite`; PostgreSQL demeure la configuration principale et celle
 de la suite backend complète.
 
-Commencer par `docs/FINAL_RELEASE.md` pour l'état de la release, puis par
-`docs/README.md` pour l'index, les commandes et le
+Commencer par `docs/LOCAL_FINAL_VALIDATION_REPORT.md` pour l'état strict du
+laboratoire, puis par `docs/README.md` pour l'index, les commandes et le
 troubleshooting. Les rapports `docs/RECONSTRUCTION_AUDIT.md` et
 `docs/TEST_RECOVERY_REPORT.md` restent des preuves historiques; les résultats
 courants sont 186 tests Django découverts sur PostgreSQL : 183 réussis, 3 ignorés

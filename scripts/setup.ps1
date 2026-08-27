@@ -2,6 +2,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
 $root = Get-ProjectRoot
 Set-Location $root
+& (Join-Path $PSScriptRoot 'prepare-local-compose-env.ps1')
 if (-not (Test-Path '.venv\Scripts\python.exe')) { python -m venv .venv }
 & '.\.venv\Scripts\python.exe' -m pip install --upgrade pip
 & '.\.venv\Scripts\python.exe' -m pip install -r backend\requirements-dev.txt -r agent\requirements.txt

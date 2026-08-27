@@ -56,16 +56,17 @@ docker compose version
 
 ## Configuration sans secrets dans Git
 
-Copier le modèle racine, jamais le fichier backend de développement :
+Préparer le fichier local avec le script idempotent :
 
 ```powershell
-Copy-Item .env.example .env
-python -c "import secrets; print(secrets.token_urlsafe(64))"
-python -c "import secrets; print(secrets.token_urlsafe(64))"
-python -c "import secrets; print(secrets.token_urlsafe(32))"
+./scripts/prepare-local-compose-env.ps1
 ```
 
-Reporter les trois valeurs indépendantes dans `DJANGO_SECRET_KEY`, `JWT_SIGNING_KEY` et `POSTGRES_PASSWORD`. `.env` est ignoré par Git. En production, injecter ces valeurs depuis le gestionnaire de secrets de la plateforme plutôt que de conserver un fichier sur disque.
+Le script conserve les valeurs existantes, réutilise les secrets valides du
+fichier local `backend/.env` lorsqu'ils existent et génère autrement des valeurs
+aléatoires indépendantes. Il n'affiche jamais les secrets. `.env` est ignoré par
+Git. En production, injecter ces valeurs depuis le gestionnaire de secrets de la
+plateforme plutôt que de conserver un fichier sur disque.
 
 Variables indispensables :
 
@@ -144,6 +145,19 @@ docker compose down
 `docker compose down -v` supprime définitivement la base, le cache persistant, les modèles et le calendrier Beat. Cette commande est réservée aux environnements jetables après vérification exacte du projet Compose ciblé.
 
 Les sauvegardes et restaurations PostgreSQL sont détaillées dans `docs/DATABASE.md`. Une sauvegarde de production doit être testée par restauration, stockée hors de l'hôte Docker et chiffrée.
+
+Pour le laboratoire local, le script de sauvegarde doit recevoir explicitement
+la composition locale afin de ne pas exiger le domaine ou le SMTP de production :
+
+```bash
+ENV_FILE="$PWD/.env" \
+BACKUP_DIR="$PWD/runtime/backups" \
+COMPOSE_MODE=local \
+sh scripts/backup-postgres.sh
+```
+
+Le mode par défaut reste `production`. La présence du dump et de son checksum ne
+suffit pas : restaurer dans une base temporaire puis vérifier tables et données.
 
 ## HTTPS et production
 
