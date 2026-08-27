@@ -8,6 +8,13 @@
 
 **Tag de récupération :** `pre-local-only-cleanup`
 
+> **État opérationnel plus récent :** la campagne REAL local/LAN du 27 août
+> 2026 a retiré du tenant opérationnel les 12 machines et 250 métriques
+> synthétiques PFE25 après sauvegarde PostgreSQL. Les résultats ML, prédictifs,
+> VMware et Hyper-V décrits ci-dessous restent des preuves historiques de test
+> contrôlé; ils ne sont plus affichés comme infrastructure réelle. Voir
+> `docs/REAL_LOCAL_DATA_AUDIT.md` et `docs/REAL_LOCAL_LAN_VALIDATION.md`.
+
 ## 1. Executive Summary
 
 Le projet fonctionne à nouveau en local. Le défaut visible provenait de

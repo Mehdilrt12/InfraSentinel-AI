@@ -10,7 +10,7 @@ les validations qui nécessitent encore une infrastructure externe.
 |---|---|
 | Vérifier la release de soutenance | [validation locale finale](LOCAL_FINAL_VALIDATION_REPORT.md), [validation historique](FINAL_VALIDATION_REPORT.md), [release finale](FINAL_RELEASE.md) |
 | Comprendre le système | [Architecture](ARCHITECTURE.md), [base de données](DATABASE.md), [métriques](METRICS.md) |
-| Exploiter en local/LAN | [architecture du laboratoire](LOCAL_LAB_ARCHITECTURE.md) |
+| Exploiter en local/LAN | [architecture du laboratoire](LOCAL_LAB_ARCHITECTURE.md), [audit des données réelles](REAL_LOCAL_DATA_AUDIT.md), [campagne LAN](REAL_LOCAL_LAN_VALIDATION.md) |
 | Utiliser l'API | [API/OpenAPI](API.md), [temps réel](REALTIME.md), [audit](AUDIT_LOGS.md) |
 | Exploiter la supervision | [règles](RULE_ENGINE.md), [alertes](ALERT_ENGINE.md), [recommandations](RECOMMENDATIONS.md), [notifications](NOTIFICATIONS.md) |
 | Comprendre l'IA/ML | [pipeline ML](ML.md), [évaluation](ML_EVALUATION.md), [analyse prédictive](PREDICTIVE_ANALYSIS.md) |
@@ -50,6 +50,9 @@ docker compose --env-file .env ps
 
 Par défaut, le dashboard est publié sur `http://127.0.0.1:5173` et l'API sur
 `http://127.0.0.1:8000`. Voir [Docker](DOCKER.md) pour les healthchecks.
+Pour le LAN, exécuter `./scripts/prepare-local-compose-env.ps1 -Lan`; PostgreSQL
+et Redis restent alors liés à loopback tandis que 5173/8000 deviennent
+accessibles selon les règles du pare-feu Private.
 
 ### Développement Windows
 
@@ -99,8 +102,10 @@ Les exemples versionnés ne contiennent aucun secret. Les variables essentielles
 sont `DJANGO_SECRET_KEY`, `JWT_SIGNING_KEY`, `ALLOWED_HOSTS`, `FRONTEND_URL`,
 `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, les variables `POSTGRES_*`,
 `REDIS_URL`, `CELERY_BROKER_URL` et `CELERY_RESULT_BACKEND`. Les URLs publiques du
-frontend viennent de `VITE_API_URL`, `VITE_WS_URL` et
-`VITE_PUBLIC_REGISTRATION_ENABLED` au moment du build.
+frontend peuvent venir de `VITE_API_URL` et `VITE_WS_URL`; l'image Docker locale
+utilise par défaut les routes same-origin `/api` et `/ws`, ce qui convient au
+LAN sans hardcoder l'adresse du serveur. L'inscription publique est contrôlée
+par `VITE_PUBLIC_REGISTRATION_ENABLED` au moment du build.
 
 ## Diagnostic rapide
 

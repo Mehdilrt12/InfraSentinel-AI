@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import secrets
 import sys
 import uuid
 from pathlib import Path
@@ -36,7 +37,8 @@ from realtime.publisher import publish  # noqa: E402
 
 API_URL = os.getenv("FINAL_API_URL", "http://127.0.0.1:8000/api").rstrip("/")
 WS_URL = os.getenv("FINAL_WS_URL", "ws://127.0.0.1:8000/ws/events/")
-PASSWORD = "FinalRealtimeProbe12!"
+ORIGIN = os.getenv("FINAL_ORIGIN", "http://127.0.0.1:5173")
+PASSWORD = secrets.token_urlsafe(24)
 
 
 def request_json(path: str, payload: dict, token: str = "") -> tuple[int, dict]:
@@ -116,11 +118,11 @@ async def main() -> None:
         async with (
             websockets.connect(
                 f"{WS_URL}?{urlencode({'ticket': first_ticket})}",
-                origin="http://127.0.0.1:5173",
+                origin=ORIGIN,
             ) as first,
             websockets.connect(
                 f"{WS_URL}?{urlencode({'ticket': second_ticket})}",
-                origin="http://127.0.0.1:5173",
+                origin=ORIGIN,
             ) as second,
         ):
             await publish_event(customer, 1)
@@ -141,14 +143,14 @@ async def main() -> None:
         reconnect_ticket = await ticket(access)
         reconnect_url = f"{WS_URL}?{urlencode({'ticket': reconnect_ticket, 'since': sequence})}"
         async with websockets.connect(
-            reconnect_url, origin="http://127.0.0.1:5173"
+            reconnect_url, origin=ORIGIN
         ) as reconnected:
             replay = json.loads(await asyncio.wait_for(reconnected.recv(), 5))
             evidence["replay_after_disconnect"] = replay["sequence"] == missed.sequence
 
         try:
             async with websockets.connect(
-                reconnect_url, origin="http://127.0.0.1:5173"
+                reconnect_url, origin=ORIGIN
             ) as reused:
                 await reused.recv()
         except websockets.exceptions.InvalidStatus as exc:

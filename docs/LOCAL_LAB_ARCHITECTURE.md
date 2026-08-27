@@ -62,8 +62,16 @@ Get-NetIPAddress -AddressFamily IPv4 |
   Where-Object { $_.IPAddress -notmatch '^(127|169\.254)\.' }
 ```
 
-Configurer ensuite les valeurs locales non versionnées. Exemple conceptuel si
-l'adresse observée est `192.168.x.x` :
+Le script suivant détecte l'adresse active et prépare le fichier `.env` local
+non versionné sans afficher ni remplacer les secrets existants :
+
+```powershell
+./scripts/prepare-local-compose-env.ps1 -Lan
+docker compose --env-file .env up -d --wait
+```
+
+Il produit conceptuellement la configuration suivante si l'adresse observée
+est `192.168.x.x` :
 
 ```dotenv
 API_BIND_ADDRESS=0.0.0.0
@@ -72,13 +80,28 @@ ALLOWED_HOSTS=127.0.0.1,localhost,192.168.x.x
 FRONTEND_URL=http://192.168.x.x:5173
 CORS_ALLOWED_ORIGINS=http://192.168.x.x:5173
 CSRF_TRUSTED_ORIGINS=http://192.168.x.x:5173
-VITE_API_URL=http://192.168.x.x:8000/api
-VITE_WS_URL=ws://192.168.x.x:8000/ws/events/
+POSTGRES_BIND_ADDRESS=127.0.0.1
+REDIS_BIND_ADDRESS=127.0.0.1
 ```
 
-L'agent utilise la même origine via `backend_url` ou
+Le frontend Docker utilise `/api` et `/ws` sur la même origine que la page; un
+navigateur distant ne redirige donc jamais vers son propre localhost. L'agent
+utilise directement l'API LAN via `backend_url` ou
 `INFRASENTINEL_SERVER_URL`. Ne jamais ouvrir PostgreSQL (5432) ou Redis (6379)
-sur le LAN. Le pare-feu Windows doit limiter 5173/8000 au réseau de laboratoire.
+sur le LAN.
+
+Le pare-feu Windows doit limiter 5173/8000 au profil Private et à
+`LocalSubnet` :
+
+```powershell
+# PowerShell administrateur, après vérification que le réseau est de confiance
+Set-NetConnectionProfile -InterfaceAlias 'Wi-Fi' -NetworkCategory Private
+./scripts/configure-lan-firewall.ps1 -Action Install
+./scripts/configure-lan-firewall.ps1 -Action Status
+```
+
+Le script crée seulement deux règles TCP entrantes : dashboard 5173 et
+API/agent/WebSocket 8000. Il ne désactive jamais le pare-feu.
 Sur un réseau non maîtrisé, utiliser HTTPS derrière le reverse proxy générique
 ou un tunnel/VPN privé; ne pas exposer directement Daphne/Vite à Internet.
 
