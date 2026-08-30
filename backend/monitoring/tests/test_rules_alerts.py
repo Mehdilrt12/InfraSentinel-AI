@@ -126,9 +126,63 @@ class RuleEngineTests(TenantAPITestCase):
             )
         )
         alert.refresh_from_db()
+        self.assertNotEqual(alert.status, Alert.Status.RESOLVED)
+        evaluate_metric(
+            self._metric(
+                "system.memory.utilization", 30, timestamp=now + timedelta(seconds=2)
+            )
+        )
+        alert.refresh_from_db()
         state = RuleState.objects.get(rule=rule, machine=self.machine)
         self.assertEqual(alert.status, Alert.Status.RESOLVED)
         self.assertFalse(state.active)
+
+    def test_large_sampling_gap_restarts_duration_evidence(self):
+        rule = self._rule(
+            "system.cpu.utilization", ">", threshold=80, duration_seconds=60
+        )
+        start = timezone.now()
+        self.assertEqual(
+            evaluate_metric(
+                self._metric("system.cpu.utilization", 90, timestamp=start)
+            ),
+            [],
+        )
+        self.assertEqual(
+            evaluate_metric(
+                self._metric(
+                    "system.cpu.utilization",
+                    91,
+                    timestamp=start + timedelta(minutes=5),
+                )
+            ),
+            [],
+        )
+        state = RuleState.objects.get(rule=rule, machine=self.machine)
+        self.assertEqual(state.consecutive_matches, 1)
+        self.assertEqual(state.first_true_at, start + timedelta(minutes=5))
+
+    def test_active_rule_survives_one_normal_sample_then_recovers(self):
+        rule = self._rule("system.cpu.utilization", ">", threshold=80)
+        start = timezone.now()
+        alert = evaluate_metric(
+            self._metric("system.cpu.utilization", 90, timestamp=start)
+        )[0]
+        evaluate_metric(
+            self._metric(
+                "system.cpu.utilization", 20, timestamp=start + timedelta(seconds=30)
+            )
+        )
+        alert.refresh_from_db()
+        self.assertNotEqual(alert.status, Alert.Status.RESOLVED)
+        evaluate_metric(
+            self._metric(
+                "system.cpu.utilization", 20, timestamp=start + timedelta(seconds=60)
+            )
+        )
+        alert.refresh_from_db()
+        self.assertEqual(alert.status, Alert.Status.RESOLVED)
+        self.assertFalse(RuleState.objects.get(pk=rule.states.get().pk).active)
 
     def test_offline_rule_changes_status_and_deduplicates_repeated_scan(self):
         self.machine.last_seen = timezone.now() - timedelta(minutes=10)

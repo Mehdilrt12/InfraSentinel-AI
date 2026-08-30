@@ -30,6 +30,7 @@ DEMO_PREFIX = "[PFE DEMO]"
 DEMO_USER_PREFIX = "pfe25_"
 ISOLATED_CUSTOMER_SLUG = "pfe-demo-isolated"
 DEMO_EMAIL_DOMAIN = "demo.invalid"
+DEMO_DATA_CLASSIFICATION = "SYNTHETIC_DEMO"
 CONSOLE_EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 ML_FEATURES = (
     "system.cpu.utilization",
@@ -112,10 +113,17 @@ class Command(BaseCommand):
                 "synthetic": True,
                 "demo_suite": DEMO_SUITE,
                 "purpose": "jury_demonstration_only",
+                "data_classification": DEMO_DATA_CLASSIFICATION,
             },
+            include_controlled=True,
         )
         self._create_monitoring_scenarios(customer, machines)
-        inference = infer_customer(customer.pk, days=1, machine_ids=[machines["ml"].pk])
+        inference = infer_customer(
+            customer.pk,
+            days=1,
+            machine_ids=[machines["ml"].pk],
+            include_controlled=True,
+        )
         notification_status = self._create_notification_scenario(customer, machines)
         summary = self._summary(customer)
         summary.update(
@@ -206,7 +214,11 @@ class Command(BaseCommand):
                 customer=customer,
                 name=f"{DEMO_PREFIX} {name}",
                 kind=kind,
-                metadata={"synthetic": True, "demo_suite": DEMO_SUITE},
+                metadata={
+                    "synthetic": True,
+                    "demo_suite": DEMO_SUITE,
+                    "data_classification": DEMO_DATA_CLASSIFICATION,
+                },
             )
         return result
 
@@ -234,9 +246,14 @@ class Command(BaseCommand):
             os_information={
                 "synthetic": True,
                 "demo_suite": DEMO_SUITE,
+                "data_classification": DEMO_DATA_CLASSIFICATION,
                 "platform": "Windows Server 2022" if source_type == "WINDOWS" else source_type,
             },
-            metadata={"synthetic": True, "demo_suite": DEMO_SUITE},
+            metadata={
+                "synthetic": True,
+                "demo_suite": DEMO_SUITE,
+                "data_classification": DEMO_DATA_CLASSIFICATION,
+            },
         )
 
     def _create_machines(self, customer, environments):
@@ -276,7 +293,11 @@ class Command(BaseCommand):
             customer=customer,
             name=f"{DEMO_PREFIX} Tenant isolé",
             kind=Environment.Kind.WINDOWS,
-            metadata={"synthetic": True, "demo_suite": DEMO_SUITE},
+            metadata={
+                "synthetic": True,
+                "demo_suite": DEMO_SUITE,
+                "data_classification": DEMO_DATA_CLASSIFICATION,
+            },
         )
         self._machine(
             customer,
@@ -308,7 +329,11 @@ class Command(BaseCommand):
             endpoint="https://vcenter.demo.invalid/sdk",
             secret_ref="PFE_DEMO_VMWARE_SECRET_NOT_USED",
             enabled=False,
-            config={"synthetic": True, "demo_suite": DEMO_SUITE},
+            config={
+                "synthetic": True,
+                "demo_suite": DEMO_SUITE,
+                "data_classification": DEMO_DATA_CLASSIFICATION,
+            },
             last_error="Mode démonstration synthétique : aucune connexion vCenter.",
         )
         hyperv = IntegrationEndpoint.objects.create(
@@ -319,7 +344,11 @@ class Command(BaseCommand):
             endpoint="hyperv.demo.invalid",
             secret_ref="PFE_DEMO_HYPERV_SECRET_NOT_USED",
             enabled=False,
-            config={"synthetic": True, "demo_suite": DEMO_SUITE},
+            config={
+                "synthetic": True,
+                "demo_suite": DEMO_SUITE,
+                "data_classification": DEMO_DATA_CLASSIFICATION,
+            },
             last_error="Mode démonstration synthétique : aucune connexion Hyper-V.",
         )
         now = timezone.now()
@@ -338,7 +367,11 @@ class Command(BaseCommand):
                 kind=kind,
                 name=machine.hostname,
                 state=state,
-                metadata={"synthetic": True, "demo_suite": DEMO_SUITE},
+                metadata={
+                    "synthetic": True,
+                    "demo_suite": DEMO_SUITE,
+                    "data_classification": DEMO_DATA_CLASSIFICATION,
+                },
                 last_seen=now,
             )
         VirtualAsset.objects.create(
@@ -352,6 +385,7 @@ class Command(BaseCommand):
             metadata={
                 "synthetic": True,
                 "demo_suite": DEMO_SUITE,
+                "data_classification": DEMO_DATA_CLASSIFICATION,
                 "capacity_bytes": 2 * 1024**4,
             },
             last_seen=now,
@@ -371,14 +405,15 @@ class Command(BaseCommand):
             metadata={
                 "synthetic": True,
                 "demo_suite": DEMO_SUITE,
+                "data_classification": DEMO_DATA_CLASSIFICATION,
                 **(metadata or {}),
             },
             idempotency_key=f"pfe25:{machine.external_id}:{key}:{name}"[:128],
         )
 
     def _create_training_history(self, machine):
-        start = timezone.now().replace(second=0, microsecond=0) - timedelta(minutes=210)
-        for bucket in range(36):
+        start = timezone.now().replace(second=0, microsecond=0) - timedelta(minutes=201)
+        for bucket in range(200):
             wave = math.sin(bucket / 4)
             values = {
                 "system.cpu.utilization": (38 + 5 * wave, "%"),
@@ -388,7 +423,7 @@ class Command(BaseCommand):
                 "system.network.out": (1_000_000 + abs(wave) * 250_000, "bytes/s"),
                 "system.network.latency": (12 + abs(wave) * 4, "ms"),
             }
-            timestamp = start + timedelta(minutes=bucket * 5)
+            timestamp = start + timedelta(minutes=bucket)
             for name, (value, unit) in values.items():
                 self._metric(machine, name, value, unit, timestamp, f"baseline-{bucket}")
 
@@ -492,8 +527,22 @@ class Command(BaseCommand):
             "system.network.out": (47_771_676, "bytes/s"),
             "system.network.latency": (10.6787, "ms"),
         }
-        for name, (value, unit) in extreme_values.items():
-            self._metric(machines["ml"], name, value, unit, now, "ml-extreme")
+        latest_completed_minute = now.replace(second=0, microsecond=0) - timedelta(
+            minutes=1
+        )
+        for window in range(5):
+            timestamp = latest_completed_minute - timedelta(minutes=4 - window)
+            for name, (value, unit) in extreme_values.items():
+                # Cinq fenêtres complètes fournissent la preuve temporelle 3/5 requise
+                # par le pipeline, sans présenter ces mesures synthétiques comme réelles.
+                self._metric(
+                    machines["ml"],
+                    name,
+                    value * (1 + window / 100),
+                    unit,
+                    timestamp,
+                    f"ml-extreme-{window}",
+                )
 
     def _create_notification_scenario(self, customer, machines):
         preference = NotificationPreference.objects.create(
@@ -520,6 +569,7 @@ class Command(BaseCommand):
                 "message": alert.message,
                 "synthetic": True,
                 "demo_suite": DEMO_SUITE,
+                "data_classification": DEMO_DATA_CLASSIFICATION,
             },
             dedup_key=f"pfe25:notification:{alert.pk}",
         )
@@ -542,6 +592,7 @@ class Command(BaseCommand):
         return {
             "customer": customer.slug,
             "synthetic": True,
+            "data_classification": DEMO_DATA_CLASSIFICATION,
             "demo_users": User.objects.filter(
                 customer=customer, username__startswith=DEMO_USER_PREFIX
             ).count(),

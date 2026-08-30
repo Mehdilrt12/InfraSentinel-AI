@@ -12,7 +12,9 @@ Le backend accepte encore `Authorization: Bearer` pour compatibilité, mais le c
 professionnel utilise l'en-tête dédié.
 
 Métriques : CPU, RAM, usage/espace disque, I/O, réseau in/out, latence TCP,
-uptime, processus, GPU NVIDIA optionnel, services critiques, OS, hostname et IP.
+uptime, processus, services critiques, OS, hostname et IP. Pour NVIDIA,
+`nvidia-smi` fournit optionnellement utilisation GPU, VRAM utilisée, pourcentage
+VRAM et température. Une valeur `N/A` ou un GPU absent n'est pas remplacé par zéro.
 Le cache SQLite local est borné, FIFO et persistant; ses payloads sont chiffrés par
 DPAPI sous Windows et les anciennes lignes en clair restent lisibles uniquement pour
 assurer une migration progressive. Retry exponentiel avec jitter,
@@ -87,7 +89,11 @@ fournisseur. Le spool est vidé dans l'ordre après le retour du serveur.
 - token invalide : révoquer/réenrôler sans copier le token dans un log;
 - API indisponible : vérifier HTTPS/DNS/pare-feu; le spool doit se vider ensuite;
 - erreur TLS : corriger le certificat, ne pas désactiver TLS en production;
-- GPU absent : comportement normal si aucun GPU compatible n'est présent.
+- GPU absent : comportement normal si aucun GPU compatible n'est présent ;
+- GPU présent : vérifier les séries `system.gpu.utilization`,
+  `system.gpu.memory.used`, `system.gpu.memory.utilization` et
+  `system.gpu.temperature`. La puissance et le throttling restent des garde-fous
+  du banc de test, pas des métriques envoyées par l'agent.
 
 La validation locale du setup ne remplace pas une campagne sur toutes les versions
 Windows cibles ni une signature de code publique. Voir

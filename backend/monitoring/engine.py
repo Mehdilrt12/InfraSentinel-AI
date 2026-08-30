@@ -24,6 +24,9 @@ DIMENSION_FIELDS = (
     "gpu_index",
     "datastore",
 )
+MIN_CONSECUTIVE_MATCHES = 2
+RECOVERY_CONSECUTIVE_NORMAL = 2
+MIN_MAX_EVIDENCE_GAP_SECONDS = 120
 
 
 def _dimension(metric):
@@ -65,21 +68,40 @@ def evaluate_metric(metric):
         state.last_evaluated_at = now
         state.last_value = metric.metric_value
         if not matches:
-            was_active = state.active
+            state.consecutive_matches = 0
+            state.consecutive_normal += 1
             state.first_true_at = None
-            state.active = False
-            state.save()
-            if was_active:
+            if state.active and state.consecutive_normal >= RECOVERY_CONSECUTIVE_NORMAL:
+                state.active = False
+                state.last_matching_at = None
                 resolve_open_alert(
                     metric.machine,
                     "RULE_THRESHOLD",
                     f"{rule.pk}:{dimension}",
                 )
+            elif not state.active:
+                state.last_matching_at = None
+            state.save()
             continue
+        max_gap_seconds = max(
+            MIN_MAX_EVIDENCE_GAP_SECONDS, rule.duration_seconds * 2
+        )
+        if state.last_matching_at and (
+            now - state.last_matching_at
+        ).total_seconds() > max_gap_seconds:
+            state.first_true_at = None
+            state.consecutive_matches = 0
         if state.first_true_at is None:
             state.first_true_at = now
+        state.last_matching_at = now
+        state.consecutive_matches += 1
+        state.consecutive_normal = 0
         elapsed = max(0, (now - state.first_true_at).total_seconds())
-        if elapsed >= rule.duration_seconds:
+        evidence_ready = rule.duration_seconds == 0 or (
+            elapsed >= rule.duration_seconds
+            and state.consecutive_matches >= MIN_CONSECUTIVE_MATCHES
+        )
+        if state.active or evidence_ready:
             alert, _ = create_or_update_alert(
                 machine=metric.machine,
                 alert_type="RULE_THRESHOLD",

@@ -304,6 +304,30 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(services[0]["metric_value"], 0)
         self.assertEqual(services[0]["status"], "not_found")
 
+    def test_gpu_metrics_keep_missing_values_distinct_from_zero(self):
+        collector = WindowsCollector(AgentConfig("https://server.example", "host"))
+        output = "0, RTX Test, 72, 2048, 8192, 67\n1, GPU Limited, N/A, N/A, 4096, N/A\n"
+        with (
+            patch("infrasentinel_agent.collector.shutil.which", return_value="nvidia-smi"),
+            patch(
+                "infrasentinel_agent.collector.subprocess.run",
+                return_value=SimpleNamespace(stdout=output),
+            ),
+        ):
+            metrics = collector._gpu("timestamp")
+
+        first_gpu = {
+            item["metric_name"]: item for item in metrics if item["metadata"]["gpu_index"] == "0"
+        }
+        self.assertEqual(first_gpu["system.gpu.utilization"]["metric_value"], 72)
+        self.assertEqual(first_gpu["system.gpu.memory.used"]["metric_value"], 2 * 1024**3)
+        self.assertEqual(first_gpu["system.gpu.memory.utilization"]["metric_value"], 25)
+        self.assertEqual(first_gpu["system.gpu.temperature"]["metric_value"], 67)
+        self.assertFalse(
+            any(item["metadata"]["gpu_index"] == "1" for item in metrics),
+            "N/A must remain missing and must not be emitted as a numeric zero.",
+        )
+
 
 class RuntimeTests(unittest.TestCase):
     class OneCycleStop:

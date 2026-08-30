@@ -14,8 +14,12 @@ from metrics.models import NormalizedMetric
 from ml_engine.evaluation import evaluate_detection_strategies
 from ml_engine.models import MLModelVersion
 from ml_engine.pipeline import (
+    ANOMALY_LOOKBACK_WINDOWS,
+    BASE_FEATURES,
     FEATURES,
+    MIN_TRAINING_WINDOWS,
     PARAMETERS,
+    _select_training_features,
     dataset_for,
     infer_customer,
     metadata_json,
@@ -38,18 +42,23 @@ class MLDatasetAndTrainingTests(TenantAPITestCase):
     def setUp(self):
         self.machine = self.create_machine()
 
-    def test_dataset_uses_only_normalized_metrics_and_five_minute_windows(self):
+    def test_dataset_uses_real_normalized_metrics_and_one_minute_windows(self):
         start = (
-            pd.Timestamp(timezone.now()).floor("5min").to_pydatetime()
-            - timedelta(minutes=10)
+            pd.Timestamp(timezone.now()).floor("1min").to_pydatetime()
+            - timedelta(minutes=2)
         )
-        for minute, cpu, ram in ((0, 10, 20), (1, 30, 40), (6, 50, 60)):
+        for seconds, cpu, ram, metadata in (
+            (0, 10, 20, {}),
+            (30, 30, 40, {}),
+            (70, 50, 60, {}),
+            (75, 99, 99, {"test_marker": "CONTROLLED_TEST"}),
+        ):
             for name, value in (
                 ("system.cpu.utilization", cpu),
                 ("system.memory.utilization", ram),
             ):
                 NormalizedMetric.objects.create(
-                    timestamp=start + timedelta(minutes=minute),
+                    timestamp=start + timedelta(seconds=seconds),
                     customer=self.customer_a,
                     environment=self.environment_a,
                     machine=self.machine,
@@ -57,6 +66,7 @@ class MLDatasetAndTrainingTests(TenantAPITestCase):
                     metric_name=name,
                     metric_value=value,
                     unit="%",
+                    metadata=metadata,
                 )
         frame = dataset_for(self.customer_a, days=1)
         self.assertEqual(list(frame.columns), FEATURES)
@@ -65,7 +75,7 @@ class MLDatasetAndTrainingTests(TenantAPITestCase):
         self.assertEqual(frame.index.names, ["machine_id", "bucket"])
 
     def test_insufficient_real_dataset_is_rejected_without_model(self):
-        with self.assertRaisesRegex(ValueError, "20 fenêtres"):
+        with self.assertRaisesRegex(ValueError, f"{MIN_TRAINING_WINDOWS} fenêtres"):
             train_customer_model(self.customer_a.pk, days=1)
         self.assertFalse(MLModelVersion.objects.filter(customer=self.customer_a).exists())
 
@@ -85,6 +95,22 @@ class MLDatasetAndTrainingTests(TenantAPITestCase):
         payload = metadata_json(model)
         self.assertIn('"random_state": 42', payload)
         self.assertIn('"synthetic": false', payload.lower())
+
+    def test_optional_gpu_features_require_real_coverage_and_missing_is_not_zero(self):
+        frame = pd.DataFrame(
+            {
+                **{feature: np.ones(MIN_TRAINING_WINDOWS) for feature in BASE_FEATURES},
+                "system.gpu.utilization": np.arange(MIN_TRAINING_WINDOWS),
+                "system.gpu.memory.used": [np.nan] * MIN_TRAINING_WINDOWS,
+                "system.gpu.memory.utilization": [np.nan] * MIN_TRAINING_WINDOWS,
+                "system.gpu.temperature": [np.nan] * MIN_TRAINING_WINDOWS,
+            }
+        )
+        selected, coverage = _select_training_features(frame)
+        self.assertIn("system.gpu.utilization", selected)
+        self.assertNotIn("system.gpu.memory.used", selected)
+        self.assertEqual(coverage["system.gpu.memory.used"], 0)
+        self.assertTrue(frame["system.gpu.memory.used"].isna().all())
 
     def test_postgresql_enforces_one_active_model_per_customer(self):
         MLModelVersion.objects.create(
@@ -155,30 +181,33 @@ class MLDatasetAndTrainingTests(TenantAPITestCase):
 class MLInferenceTests(TenantAPITestCase):
     def setUp(self):
         self.machine = self.create_machine()
-        self.now = pd.Timestamp(timezone.now()).floor("5min")
+        self.now = pd.Timestamp(timezone.now()).floor("1min")
 
     def _frame(self, values=None):
         rows = values or [
             [10, 20, 30, 100, 100, 5],
             [99, np.nan, 95, 10_000_000, 10_000_000, 500],
+            [10, 20, 30, 100, 100, 5],
+            [99, 90, 95, 10_000_000, 10_000_000, 500],
+            [99, np.nan, 95, 10_000_000, 10_000_000, 500],
         ]
         index = pd.MultiIndex.from_tuples(
             [
-                (self.machine.pk, self.now),
-                (self.machine.pk, self.now + pd.Timedelta(minutes=5)),
-            ][: len(rows)],
+                (self.machine.pk, self.now + pd.Timedelta(minutes=index))
+                for index in range(len(rows))
+            ],
             names=["machine_id", "bucket"],
         )
-        return pd.DataFrame(rows, index=index, columns=FEATURES)
+        return pd.DataFrame(rows, index=index, columns=BASE_FEATURES)
 
-    def _model(self, directory, decisions=(-0.1, -0.9), **overrides):
+    def _model(self, directory, decisions=(0.9, -0.9, 0.9, -0.9, -0.9), **overrides):
         artifact = Path(directory) / "model.joblib"
         joblib.dump(FixedScorePipeline(list(decisions)), artifact)
         values = {
             "customer": self.customer_a,
             "display_number": 1,
             "version": "iforest-inference",
-            "features": FEATURES,
+            "features": BASE_FEATURES,
             "parameters": PARAMETERS,
             "decision_threshold": 0.5,
             "artifact_path": artifact.name,
@@ -199,7 +228,7 @@ class MLInferenceTests(TenantAPITestCase):
             ):
                 result = infer_customer(self.customer_a.pk)
                 replay = infer_customer(self.customer_a.pk)
-        self.assertEqual(result["evaluated"], 2)
+        self.assertEqual(result["evaluated"], ANOMALY_LOOKBACK_WINDOWS)
         self.assertEqual(result["anomalies"], 1)
         self.assertEqual(replay["anomalies"], 0)
         anomaly = Anomaly.objects.get(customer=self.customer_a)
@@ -217,7 +246,7 @@ class MLInferenceTests(TenantAPITestCase):
 
     def test_normal_input_does_not_create_anomaly(self):
         with tempfile.TemporaryDirectory() as directory:
-            self._model(directory, decisions=(0.9, 0.8))
+            self._model(directory, decisions=(0.9, 0.8, 0.9, 0.8, 0.9))
             with (
                 patch("ml_engine.pipeline.MODEL_DIR", Path(directory)),
                 patch("ml_engine.pipeline.dataset_for", return_value=self._frame()),
@@ -226,6 +255,43 @@ class MLInferenceTests(TenantAPITestCase):
         self.assertEqual(result["anomalies"], 0)
         self.assertFalse(Anomaly.objects.exists())
 
+    def test_two_flags_do_not_trigger_and_three_normal_windows_resolve(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self._model(directory)
+            frame = self._frame()
+            with (
+                patch("ml_engine.pipeline.MODEL_DIR", Path(directory)),
+                patch("ml_engine.pipeline.dataset_for", return_value=frame),
+                patch(
+                    "ml_engine.pipeline.joblib.load",
+                    side_effect=[
+                        FixedScorePipeline([0.9, -0.9, 0.9, -0.9, 0.9]),
+                        FixedScorePipeline([0.9, -0.9, 0.9, -0.9, -0.9]),
+                        FixedScorePipeline([-0.9, -0.9, 0.9, 0.9, 0.9]),
+                    ],
+                ),
+            ):
+                two_flags = infer_customer(self.customer_a.pk)
+                stable = infer_customer(self.customer_a.pk)
+                recovered = infer_customer(self.customer_a.pk)
+
+        self.assertEqual(two_flags["anomalies"], 0)
+        self.assertEqual(stable["anomalies"], 1)
+        self.assertEqual(recovered["resolved_alerts"], 1)
+        self.assertEqual(Alert.objects.get(type="ML_ANOMALY").status, Alert.Status.RESOLVED)
+
+    def test_short_history_is_reported_without_alert(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self._model(directory, decisions=(-0.9, -0.9))
+            short_frame = self._frame()[:2]
+            with (
+                patch("ml_engine.pipeline.MODEL_DIR", Path(directory)),
+                patch("ml_engine.pipeline.dataset_for", return_value=short_frame),
+            ):
+                result = infer_customer(self.customer_a.pk)
+        self.assertEqual(result["insufficient_history"], 1)
+        self.assertFalse(Alert.objects.exists())
+
     def test_absent_model_empty_input_and_missing_artifact_have_explicit_fallbacks(self):
         self.assertEqual(
             infer_customer(self.customer_a.pk),
@@ -233,7 +299,7 @@ class MLInferenceTests(TenantAPITestCase):
         )
         with tempfile.TemporaryDirectory() as directory:
             model = self._model(directory)
-            empty = pd.DataFrame(columns=FEATURES)
+            empty = pd.DataFrame(columns=BASE_FEATURES)
             with patch("ml_engine.pipeline.dataset_for", return_value=empty):
                 self.assertEqual(
                     infer_customer(self.customer_a.pk),

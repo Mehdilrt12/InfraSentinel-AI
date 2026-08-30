@@ -30,6 +30,25 @@ def env_required(name):
     return value
 
 
+def env_int(name, default, *, minimum=None, maximum=None):
+    raw_value = os.getenv(name, str(default)).strip()
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise ImproperlyConfigured(
+            f"La variable d'environnement {name} doit être un entier."
+        ) from exc
+    if minimum is not None and value < minimum:
+        raise ImproperlyConfigured(
+            f"La variable d'environnement {name} doit être >= {minimum}."
+        )
+    if maximum is not None and value > maximum:
+        raise ImproperlyConfigured(
+            f"La variable d'environnement {name} doit être <= {maximum}."
+        )
+    return value
+
+
 SECRET_KEY = env_required("DJANGO_SECRET_KEY")
 DEBUG = env_bool("DJANGO_DEBUG", False)
 ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", env_required("ALLOWED_HOSTS"))
@@ -108,6 +127,26 @@ if DATABASE_ENGINE == "sqlite":
         }
     }
 else:
+    postgres_pool_enabled = env_bool("POSTGRES_POOL_ENABLED", True)
+    postgres_conn_max_age = env_int("POSTGRES_CONN_MAX_AGE", 0, minimum=0)
+    if postgres_pool_enabled and postgres_conn_max_age != 0:
+        raise ImproperlyConfigured(
+            "POSTGRES_CONN_MAX_AGE doit valoir 0 lorsque le pool PostgreSQL est actif."
+        )
+    postgres_options = {"sslmode": os.getenv("POSTGRES_SSLMODE", "prefer")}
+    if postgres_pool_enabled:
+        postgres_options["pool"] = {
+            "min_size": env_int("POSTGRES_POOL_MIN_SIZE", 0, minimum=0, maximum=20),
+            "max_size": env_int("POSTGRES_POOL_MAX_SIZE", 20, minimum=1, maximum=50),
+            "timeout": env_int("POSTGRES_POOL_TIMEOUT", 10, minimum=1, maximum=60),
+            "max_idle": env_int(
+                "POSTGRES_POOL_MAX_IDLE", 60, minimum=1, maximum=3600
+            ),
+        }
+        if postgres_options["pool"]["min_size"] > postgres_options["pool"]["max_size"]:
+            raise ImproperlyConfigured(
+                "POSTGRES_POOL_MIN_SIZE ne peut pas dépasser POSTGRES_POOL_MAX_SIZE."
+            )
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
@@ -116,8 +155,11 @@ else:
             "PASSWORD": env_required("POSTGRES_PASSWORD"),
             "HOST": env_required("POSTGRES_HOST"),
             "PORT": env_required("POSTGRES_PORT"),
-            "OPTIONS": {"sslmode": os.getenv("POSTGRES_SSLMODE", "prefer")},
-            "CONN_MAX_AGE": int(os.getenv("POSTGRES_CONN_MAX_AGE", "60")),
+            "OPTIONS": postgres_options,
+            # Persistent per-thread connections leak capacity under ASGI. A bounded
+            # psycopg pool reuses connections across concurrent request threads.
+            "CONN_MAX_AGE": postgres_conn_max_age,
+            "CONN_HEALTH_CHECKS": env_bool("POSTGRES_CONN_HEALTH_CHECKS", True),
         }
     }
 
@@ -350,7 +392,7 @@ CELERY_BEAT_SCHEDULE = {
         "task": "monitoring.evaluate_rules",
         "schedule": 60.0,
     },
-    "analyze-ml-every-five-minutes": {"task": "ml.analyze_recent", "schedule": 300.0},
+    "analyze-ml-every-minute": {"task": "ml.analyze_recent", "schedule": 60.0},
     "notifications-every-15-seconds": {
         "task": "notifications.dispatch_pending",
         "schedule": 15.0,

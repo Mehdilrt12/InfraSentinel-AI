@@ -1,8 +1,9 @@
 # Tests de charge et scalabilité
 ## Statut
 
-La Phase 24 a été exécutée localement le 25 août 2026. Deux profils ont été
-mesurés avec le même banc reproductible :
+La Phase 24 a été exécutée localement le 25 août 2026. Une remédiation ciblée des
+connexions PostgreSQL a ensuite été validée le 30 août 2026. Deux profils initiaux
+ont été mesurés avec le même banc reproductible :
 
 - un profil nominal avec 100 agents, une collecte toutes les 30 secondes et un
   heartbeat toutes les 60 secondes ;
@@ -14,9 +15,10 @@ d'erreur**. Le profil accéléré reste sans erreur jusqu'au palier court de 25
 agents (25,82 requêtes/s), puis sature les 100 connexions PostgreSQL : 9,35 %
 d'erreurs à 50 agents et 69,92 % à 100 agents.
 
-Ces mesures qualifient l'environnement local testé. Elles ne constituent pas une
-certification de capacité de production. Aucune optimisation applicative ou
-d'infrastructure n'a été appliquée pendant cette phase.
+Ces mesures initiales qualifient l'environnement local testé. Elles ne constituent
+pas une certification de capacité de production. Aucune optimisation applicative
+ou d'infrastructure n'avait été appliquée pendant la Phase 24 initiale. La section
+« Remédiation PostgreSQL » isole les mesures prises après l'activation du pool.
 
 ## Environnement mesuré
 
@@ -25,7 +27,8 @@ d'infrastructure n'a été appliquée pendant cette phase.
 | Hôte | Lenovo 83LY, Windows 11 Pro build 26200, 32 CPU logiques, 31,73 Gio RAM |
 | Backend | un processus Daphne dédié, `DEBUG=False`, Python 3.14.6, Django 6.0.8 |
 | PostgreSQL | 17.11 Alpine dans Docker, `max_connections=100`, aucune limite CPU/RAM Docker |
-| Connexions Django | `POSTGRES_CONN_MAX_AGE=60` |
+| Connexions Django initiales | `POSTGRES_CONN_MAX_AGE=60`, sans pool borné |
+| Connexions Django après remédiation | `POSTGRES_CONN_MAX_AGE=0`, pool psycopg `min_size=0`, `max_size=20` |
 | Redis | 7.4.11 Alpine dans Docker, aucune limite CPU/RAM Docker |
 | Celery | worker et Beat existants connectés au Redis partagé |
 | Réseau | boucle locale HTTP, sans TLS, reverse proxy, DNS ni latence WAN |
@@ -176,7 +179,7 @@ Les éléments convergents sont :
 - le CPU global de l'hôte reste sous 18 %, le cache PostgreSQL reste à 100 %, et
   aucun deadlock ni fichier temporaire n'est observé.
 
-Le premier plafond est donc le **budget de connexions PostgreSQL**, en particulier
+Le premier plafond initial était donc le **budget de connexions PostgreSQL**, en particulier
 l'accumulation de connexions persistantes dans les threads synchrones, et non la
 puissance CPU globale, Redis ou la file Celery. Le test en escalier réutilise le
 même processus backend entre les paliers : il montre le comportement cumulatif
@@ -187,6 +190,55 @@ Un deuxième risque de configuration existe : le throttle IP `120/min` peut regr
 des agents distincts derrière le même NAT. Cent agents nominaux représentent environ
 300 requêtes/minute ; ils pourraient donc être limités bien avant la base si leur IP
 publique est commune.
+
+## Remédiation PostgreSQL — 30 août 2026
+
+La remédiation remplace les connexions persistantes par thread par le pool intégré
+à psycopg :
+
+```dotenv
+POSTGRES_CONN_MAX_AGE=0
+POSTGRES_CONN_HEALTH_CHECKS=true
+POSTGRES_POOL_ENABLED=true
+POSTGRES_POOL_MIN_SIZE=0
+POSTGRES_POOL_MAX_SIZE=20
+POSTGRES_POOL_TIMEOUT=10
+POSTGRES_POOL_MAX_IDLE=60
+```
+
+La dépendance installée est `psycopg[binary,pool]==3.3.4`. Le pool est borné par
+processus Django. Le total global doit donc toujours être dimensionné en fonction
+du nombre de processus API, de workers Celery et des autres consommateurs.
+
+### Mesures brutes avant/après
+
+Le profil est accéléré à un lot de métriques par seconde. Le rapport « avant » a
+mesuré chaque palier pendant environ 60 secondes. Les rapports « après » utilisent
+30 secondes de mesure après 10 secondes de chauffe. Les résultats ne constituent
+donc pas une comparaison de durée strictement identique ; ils démontrent en
+revanche le comportement de connexion et d'erreur à la même cadence par agent.
+
+| État | Rapport | Agents | Débit | p50 | p95 | p99 | Erreurs | Connexions PG max | Actives max |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Avant | `P2420260830001012.json` | 10 | 10,199 req/s | 62,708 ms | 107,247 ms | 142,499 ms | 0 % | 54 | 3 |
+| Avant | `P2420260830001012.json` | 25 | 25,416 req/s | 60,559 ms | 84,280 ms | 106,049 ms | 0 % | 80 | 3 |
+| Avant | `P2420260830001012.json` | 50 | 50,868 req/s | 92,942 ms | 203,233 ms | 474,213 ms | **2,424 %** | **100** | 4 |
+| Après | `P2420260830104017.json` | 25 | 25,071 req/s | 56,113 ms | 88,803 ms | 101,825 ms | 0 % | 11 | 2 |
+| Après | `P2420260830104017.json` | 50 | 50,042 req/s | 195,354 ms | 446,830 ms | 536,551 ms | 0 % | 24 | 3 |
+| Après | `P2420260830104017.json` | 100 | 52,372 req/s | 1 920,482 ms | 2 230,941 ms | 2 396,287 ms | 0 % | 24 | 6 |
+| Après | `P2420260830104422.json` | 250 | 55,071 req/s | 4 734,565 ms | 5 210,206 ms | 5 283,541 ms | 0 % | 24 | 3 |
+
+Au palier de 50 agents avant correction, 74 requêtes ont reçu HTTP 500 lorsque
+PostgreSQL a atteint 100 connexions. Après correction, aucune requête n'échoue sur
+les quatre paliers rejoués et le maximum reste à 24 connexions. L'épuisement des
+connexions est donc corrigé dans cet environnement.
+
+Le débit utile plafonne toutefois entre 52,372 et 55,071 requêtes/s aux paliers de
+100 et 250 agents, tandis que le p95 monte respectivement à 2 230,941 ms et
+5 210,206 ms. Le pool applique désormais une contre-pression au lieu de laisser
+PostgreSQL épuiser ses connexions ; la concurrence ASGI et la latence deviennent
+les prochaines limites à traiter. Ces paliers accélérés ne sont pas une cadence
+agent recommandée.
 
 ## Volume et rétention
 
@@ -200,15 +252,17 @@ fragmentation, compression, variation des metadata, rétention, agrégation ni
 croissance des index sur une longue période. Elle justifie toutefois de tester une
 politique de rétention avant un déploiement prolongé.
 
-## Recommandations, sans optimisation appliquée
+## Recommandations après remédiation
 
 1. **Dimensionner le budget de connexions avant toute montée en charge.** Définir
    explicitement la somme des connexions API, Daphne, Celery, Beat, outils
    d'administration et marge de secours. Ne pas se limiter à augmenter
    `max_connections`.
-2. **Tester un pooler PostgreSQL.** Valider PgBouncer en mode transaction ou un pool
-   psycopg borné, puis adapter `CONN_MAX_AGE` (souvent 0 derrière PgBouncer). Rejouer
-   exactement ce banc avant de retenir la configuration.
+2. **Conserver et surveiller le pool psycopg borné.** Le couple
+   `CONN_MAX_AGE=0`/pool max 20 a supprimé l'épuisement local. Mesurer le temps
+   d'attente d'acquisition et recalculer le budget pour chaque nouvelle réplique.
+   PgBouncer ne devient pertinent qu'après une validation dédiée d'une architecture
+   multi-processus ou multi-hôte.
 3. **Borner la concurrence applicative.** Aligner threads/processus Daphne et workers
    Celery sur le pool DB, ajouter une contre-pression, et renvoyer un 503 contrôlé
    avec retry plutôt qu'un 500 lorsque la DB est temporairement indisponible.
@@ -232,7 +286,8 @@ politique de rétention avant un déploiement prolongé.
 Le découplage systématique de l'ingestion vers Celery n'est pas recommandé sur la
 base de ces seuls résultats : Redis et la file ne sont pas le plafond observé, et
 une file introduirait de nouveaux compromis de durabilité et de latence. Le budget
-de connexions doit être corrigé et re-mesuré en premier.
+de connexions est maintenant borné et re-mesuré ; la prochaine validation doit
+cibler la contre-pression et la concurrence ASGI.
 
 ## Limites de la campagne
 
@@ -257,6 +312,9 @@ deux rapports de référence cités ci-dessus alimentent les conclusions.
 
 Prérequis : `.venv` installé, `backend/.env` configuré pour PostgreSQL et Redis,
 conteneurs DB/Redis sains, et port 8010 libre.
+
+La configuration de reproduction doit inclure les variables du pool listées dans
+la section « Remédiation PostgreSQL » et la dépendance `psycopg[binary,pool]`.
 
 ```powershell
 docker compose up -d db redis

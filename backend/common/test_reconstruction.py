@@ -278,6 +278,10 @@ class MetricAndRuleReviewTests(ReviewBase):
         evaluate_metric(
             self._metric("windows.service.state", 1, {"service_name": "MSSQL"})
         )
+        self.assertEqual(Alert.objects.filter(status="RESOLVED").count(), 0)
+        evaluate_metric(
+            self._metric("windows.service.state", 1, {"service_name": "MSSQL"})
+        )
         self.assertEqual(Alert.objects.filter(status="RESOLVED").count(), 1)
         self.assertEqual(Alert.objects.exclude(status="RESOLVED").count(), 1)
 
@@ -423,7 +427,7 @@ class HyperVCollectorReviewTests(TestCase):
 
 
 class MLReviewTests(ReviewBase):
-    def _seed_test_fixture_metrics(self, buckets=25):
+    def _seed_test_fixture_metrics(self, buckets=200):
         # Jeu synthétique réservé aux tests; il n'est jamais présenté comme donnée réelle.
         names = [
             "system.cpu.utilization",
@@ -433,13 +437,13 @@ class MLReviewTests(ReviewBase):
             "system.network.out",
             "system.network.latency",
         ]
-        start = timezone.now() - timedelta(minutes=buckets * 5)
+        start = timezone.now() - timedelta(minutes=buckets)
         rows = []
         for bucket in range(buckets):
             for offset, name in enumerate(names):
                 rows.append(
                     NormalizedMetric(
-                        timestamp=start + timedelta(minutes=bucket * 5),
+                        timestamp=start + timedelta(minutes=bucket),
                         customer=self.customer,
                         environment=self.environment,
                         machine=self.machine,
@@ -477,12 +481,14 @@ class MLReviewTests(ReviewBase):
             self.assertTrue(model.active)
             self.assertEqual(model.display_number, 2)
             self.assertEqual(
-                model.evaluation_metrics["method"], "chronological_holdout"
+                model.evaluation_metrics["method"],
+                "chronological_train_calibration_evaluation",
             )
             self.assertFalse(model.evaluation_metrics["ground_truth_available"])
             self.assertIsNone(model.evaluation_metrics["precision"])
-            self.assertEqual(model.dataset["training_rows"], 20)
-            self.assertEqual(model.dataset["validation_rows"], 5)
+            self.assertEqual(model.dataset["training_rows"], 120)
+            self.assertEqual(model.dataset["calibration_rows"], 40)
+            self.assertEqual(model.dataset["validation_rows"], 40)
             self.assertTrue(model.dataset["synthetic"])
             self.assertEqual(model.dataset["demo_suite"], "tests")
             self.assertFalse(Path(model.artifact_path).is_absolute())

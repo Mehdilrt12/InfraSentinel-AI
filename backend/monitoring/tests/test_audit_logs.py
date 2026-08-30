@@ -183,13 +183,16 @@ class AuditEventTests(TenantAPITestCase):
 
     def test_successful_training_records_reproducible_model_event(self):
         machine = self.create_machine(external_id="ml-audit", hostname="ml-audit")
-        start = pd.Timestamp(timezone.now()).floor("5min")
+        start = pd.Timestamp(timezone.now()).floor("1min")
         index = pd.MultiIndex.from_tuples(
-            [(machine.pk, start + pd.Timedelta(minutes=5 * index)) for index in range(25)],
+            [
+                (machine.pk, start + pd.Timedelta(minutes=index))
+                for index in range(200)
+            ],
             names=["machine_id", "bucket"],
         )
         frame = pd.DataFrame(
-            np.arange(25 * len(FEATURES), dtype=float).reshape(25, len(FEATURES)),
+            np.arange(200 * len(FEATURES), dtype=float).reshape(200, len(FEATURES)),
             index=index,
             columns=FEATURES,
         )
@@ -199,7 +202,7 @@ class AuditEventTests(TenantAPITestCase):
             result = train_customer_model(self.customer_a.pk, days=1)
         event = AuditLog.objects.get(action=AuditLog.Action.MODEL_TRAINED)
         self.assertEqual(event.target_id, result["model_id"])
-        self.assertEqual(event.metadata["samples"], 25)
+        self.assertEqual(event.metadata["samples"], 200)
         self.assertFalse(event.metadata["synthetic"])
 
 

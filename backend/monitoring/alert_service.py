@@ -57,7 +57,7 @@ def create_or_update_alert(
             changed = True
         if anomaly_score is not None:
             alert.anomaly_score = anomaly_score
-            changed = True
+            changed = changed or outside_cooldown
         alert.save()
     else:
         rec = build_recommendation(
@@ -158,9 +158,11 @@ def resolve_open_alert(machine, alert_type, source_key, reason="condition_cleare
     return alert
 
 
+@transaction.atomic
 def resolve_machine_alerts(machine, alert_type, reason="machine_recovered"):
+    Machine.objects.select_for_update().only("pk").get(pk=machine.pk)
     alerts = list(
-        Alert.objects.filter(
+        Alert.objects.select_for_update().filter(
             customer=machine.customer,
             machine=machine,
             type=alert_type,
@@ -171,7 +173,7 @@ def resolve_machine_alerts(machine, alert_type, reason="machine_recovered"):
     resolved = 0
     for dedup_key in alerts:
         alert = (
-            Alert.objects.filter(
+            Alert.objects.select_for_update().filter(
                 customer=machine.customer,
                 machine=machine,
                 dedup_key=dedup_key,

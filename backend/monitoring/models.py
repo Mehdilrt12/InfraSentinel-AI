@@ -67,6 +67,9 @@ class RuleState(models.Model):
     first_true_at = models.DateTimeField(null=True, blank=True)
     last_evaluated_at = models.DateTimeField(null=True, blank=True)
     last_value = models.FloatField(null=True, blank=True)
+    last_matching_at = models.DateTimeField(null=True, blank=True)
+    consecutive_matches = models.PositiveIntegerField(default=0)
+    consecutive_normal = models.PositiveIntegerField(default=0)
     active = models.BooleanField(default=False)
 
     class Meta:

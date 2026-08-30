@@ -25,6 +25,9 @@ ALIASES = {
     "uptime": "system.uptime",
     "process_count": "system.process.count",
     "gpu": "system.gpu.utilization",
+    "gpu.memory.used": "system.gpu.memory.used",
+    "gpu.memory.percent": "system.gpu.memory.utilization",
+    "gpu.temperature": "system.gpu.temperature",
     "service.state": "windows.service.state",
     "datastore.usage": "vmware.datastore.utilization",
     "vm.state": "virtual.machine.state",
@@ -43,6 +46,9 @@ DEFAULT_UNITS = {
     "system.uptime": "seconds",
     "system.process.count": "count",
     "system.gpu.utilization": "%",
+    "system.gpu.memory.used": "bytes",
+    "system.gpu.memory.utilization": "%",
+    "system.gpu.temperature": "celsius",
 }
 
 

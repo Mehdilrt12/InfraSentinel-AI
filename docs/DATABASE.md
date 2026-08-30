@@ -54,11 +54,45 @@ POSTGRES_PASSWORD=<secret-externe>
 POSTGRES_HOST=127.0.0.1
 POSTGRES_PORT=5432
 POSTGRES_SSLMODE=prefer
-POSTGRES_CONN_MAX_AGE=60
+POSTGRES_CONN_MAX_AGE=0
+POSTGRES_CONN_HEALTH_CHECKS=true
+POSTGRES_POOL_ENABLED=true
+POSTGRES_POOL_MIN_SIZE=0
+POSTGRES_POOL_MAX_SIZE=20
+POSTGRES_POOL_TIMEOUT=10
+POSTGRES_POOL_MAX_IDLE=60
 ```
 
 Aucune valeur de connexion n'est codée dans `settings.py`. En production distante,
 utiliser le mode TLS imposé par le fournisseur et vérifier ses certificats.
+
+Le backend ASGI désactive les connexions persistantes Django avec
+`POSTGRES_CONN_MAX_AGE=0` et utilise le pool fourni par
+`psycopg[binary,pool]`. Le pool est paresseux (`min_size=0`) et borné à 20
+connexions par processus Django. Le délai d'acquisition est de 10 secondes et une
+connexion inutilisée peut être fermée après 60 secondes. Quand le pool est actif,
+la configuration refuse une valeur de `POSTGRES_CONN_MAX_AGE` différente de zéro
+afin de ne pas cumuler deux stratégies de persistance.
+
+La limite de 20 est une limite **par processus**, pas une limite globale. Avant
+d'ajouter des processus API, des workers Celery ou des répliques, le budget doit
+inclure la somme de leurs pools, Beat, migrations, outils d'administration et une
+marge réservée à PostgreSQL. Augmenter `max_connections` n'est pas le premier
+correctif à appliquer.
+
+### Validation du pool ASGI
+
+Le rapport brut `runtime/performance/P2420260830001012.json`, exécuté avant la
+correction, atteint 100 connexions PostgreSQL et 2,424 % d'erreurs HTTP au palier
+de 50 agents accélérés. Après activation du pool borné, les rapports
+`P2420260830104017.json` et `P2420260830104422.json` restent à 24 connexions au
+maximum et à 0 % d'erreur jusqu'aux paliers accélérés de 100 et 250 agents.
+
+Cette correction élimine l'épuisement observé des connexions, mais ne transforme
+pas les paliers élevés en capacité nominale : à 250 agents, le p95 atteint
+5 210,206 ms. Le plafond suivant est la concurrence et la latence applicatives.
+Les détails et les limites de comparaison sont consignés dans
+[PERFORMANCE.md](PERFORMANCE.md).
 
 ## Création et contrôle des migrations
 

@@ -34,8 +34,9 @@ Les aliases `cpu`, `cpu.percent` et `cpu_usage` deviennent
 même moteur. Les principaux noms sont `system.memory.utilization`,
 `system.disk.utilization`, `system.disk.free`, `system.disk.io.read`,
 `system.disk.io.write`, `system.network.in`, `system.network.out`,
-`system.network.latency`, `system.uptime`, `system.process.count` et
-`system.gpu.utilization`.
+`system.network.latency`, `system.uptime`, `system.process.count`,
+`system.gpu.utilization`, `system.gpu.memory.used`,
+`system.gpu.memory.utilization` et `system.gpu.temperature`.
 
 Les taux KiB/MiB/GiB par seconde sont convertis en `bytes/s`; l'unité initiale est
 gardée dans `metadata.original_unit`. Les noms spécifiques sont conservés :
@@ -89,6 +90,9 @@ jamais la sémantique uniquement à partir de la taille d'un nombre.
 | `system.uptime` | `seconds` | durée | `4 j 7 h 22 min` |
 | `system.process.count` | `count` | compteur | `183` |
 | `system.gpu.utilization` | `%` | 0–100 | `72 %` |
+| `system.gpu.memory.used` | `bytes` | jauge VRAM, maximum par fenêtre ML | `4,1 Go` |
+| `system.gpu.memory.utilization` | `%` | 0–100 si capacité connue | `51,6 %` |
+| `system.gpu.temperature` | `celsius` | température fournisseur | `55 °C` |
 | `windows.service.state` | `state` | 0/1 + `status` | `En cours` / `Arrêté` |
 | `virtual.machine.state` | `state` | 0/1 + `status` | `En marche` / `Arrêtée` |
 
@@ -101,3 +105,8 @@ Les capacités utilisent un facteur 1024 (`Ko`, `Mo`, `Go`, `To`). Les débits e
 bits, lorsqu'un contrat les annonce explicitement, utilisent `Kb/s`, `Mb/s` et
 `Gb/s` avec un facteur 1000. Une valeur absente reste `—` et n'est jamais
 transformée en `0`.
+
+Pour NVIDIA, l'agent n'émet une série que si `nvidia-smi` retourne une valeur
+finie. Une machine sans GPU ou une valeur fournisseur `N/A` produit donc une
+absence de mesure, tandis qu'un GPU réellement inactif peut produire `0 %` et
+`0 bytes`. Cette distinction est conservée jusque dans le pipeline ML.

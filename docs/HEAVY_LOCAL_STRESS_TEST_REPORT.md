@@ -4,7 +4,55 @@ Date d'exécution : 29–30 août 2026
 
 Périmètre : ordinateur local autorisé et API loopback uniquement
 
-Verdict : **PARTIAL — plateforme stable en charge nominale, plafond PostgreSQL
+## Mise à jour de remédiation — 30 août 2026
+
+Les quatre problèmes confirmés ci-dessous ont été corrigés puis re-testés. Le
+détail reproductible, les rapports JSON et les limites se trouvent dans
+[STRESS_REMEDIATION_REPORT.md](STRESS_REMEDIATION_REPORT.md).
+
+Verdict actuel : **PARTIAL — la saturation PostgreSQL est corrigée, 250 agents
+réalistes passent, les alertes ML récupèrent, mais le débit accéléré plafonne côté
+application et les preuves CPU/GPU ML restent partielles.**
+
+| Validation finale | Verdict | Preuve actuelle |
+|---|---|---|
+| POSTGRESQL SATURATION | PASS | 26 connexions max, 0 erreur jusqu'à 100 agents accélérés |
+| HTTP HEAVY LOAD | PARTIAL | 45,2 req/s à 100, p95 2,60 s, gate de latence |
+| 250 AGENTS | PASS | intervalle 30 s, 0 erreur, p95 98,1 ms |
+| CPU RULE DETECTION | PARTIAL | moteur corrigé/testé ; matériel borné à 76,2 %, seuil 80 % non atteint |
+| CPU ML ANOMALY | PARTIAL | stabilité 3/5 validée ; pas de causalité CPU réelle prouvée |
+| CPU RECOVERY | PASS | CPU revenu sous 10 % sur plusieurs échantillons, aucune alerte ouverte |
+| GPU TELEMETRY | PASS | 65 %, 74 °C, 4 408 213 504 bytes / 51,6 % captés par l'agent |
+| GPU ML FEATURE | PASS | utilisation GPU dans le modèle n°8 ; absence distincte de zéro |
+| GPU ML ANOMALY | PARTIAL | scores réels sous seuil ; aucune anomalie fabriquée |
+| GPU RECOVERY | PASS | 0 %, 0 byte, 52–55 °C, aucune alerte ouverte |
+| ML FALSE POSITIVE CONTROL | PARTIAL | 529 fenêtres, FPR non mesurable sans labels, taux stable holdout 4,90 % |
+| ML ALERT RECOVERY | PASS | alertes historiques résolues par hystérésis à 10:20:08Z |
+| REDIS | PASS | sain durant les campagnes, files revenues à zéro |
+| CELERY | PASS | worker/Beat sains et suites d'intégration passantes |
+| WEBSOCKET | PASS | tests connexion, clients multiples, replay et sécurité passants |
+
+Résultats finaux :
+
+| Profil | Agents | req/s | p50 | p95 | p99 | erreurs | connexions PG max |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| réaliste 30 s | 50 | 2,80 | 51,6 ms | 71,6 ms | 198,2 ms | 0 % | 16 |
+| réaliste 30 s | 100 | 5,60 | 46,4 ms | 76,2 ms | 103,4 ms | 0 % | 16 |
+| réaliste 30 s | 250 | 13,74 | 55,5 ms | 98,1 ms | 114,9 ms | 0 % | 16 |
+| accéléré 1 s | 25 | 25,01 | 62,7 ms | 113,1 ms | 150,5 ms | 0 % | 17 |
+| accéléré 1 s | 50 | 45,52 | 1 089,0 ms | 1 334,6 ms | 1 438,7 ms | 0 % | 26 |
+| accéléré 1 s | 100 | 45,16 | 2 231,3 ms | 2 604,1 ms | 2 699,5 ms | 0 % | 26 |
+
+Le test de contrôle avec le rate limit de production a volontairement reçu des
+HTTP 429 ; l'instance Daphne dédiée a ensuite seule reçu
+`AGENT_REQUEST_RATE=100000/min`. La pile Docker normale a conservé son quota.
+
+## Rapport initial conservé
+
+Le texte suivant décrit la campagne avant remédiation et reste conservé comme
+preuve avant/après.
+
+Verdict de la campagne initiale : **PARTIAL — plateforme stable en charge nominale, plafond PostgreSQL
 reproductible en charge accélérée, chaîne ML encore trop sensible pour constituer
 une preuve causale fiable.**
 

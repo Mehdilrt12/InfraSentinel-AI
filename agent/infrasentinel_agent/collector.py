@@ -1,4 +1,5 @@
 import hashlib
+import math
 import platform
 import shutil
 import socket
@@ -82,7 +83,7 @@ class WindowsCollector:
             result = subprocess.run(
                 [
                     executable,
-                    "--query-gpu=index,name,utilization.gpu,memory.used,memory.total",
+                    "--query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu",
                     "--format=csv,noheader,nounits",
                 ],
                 capture_output=True,
@@ -94,23 +95,64 @@ class WindowsCollector:
             return []
         metrics = []
         for line in result.stdout.splitlines():
-            index, name, usage, used, total = [
-                part.strip() for part in line.split(",", 4)
-            ]
-            metrics.append(
-                self._metric(
-                    "system.gpu.utilization",
-                    float(usage),
-                    "%",
-                    timestamp,
-                    {
-                        "gpu_index": index,
-                        "gpu_name": name,
-                        "memory_used_mib": float(used),
-                        "memory_total_mib": float(total),
-                    },
+            parts = [part.strip() for part in line.split(",", 5)]
+            if len(parts) != 6:
+                continue
+            index, name, usage_raw, used_raw, total_raw, temperature_raw = parts
+
+            def number(value):
+                try:
+                    parsed = float(value)
+                except (TypeError, ValueError):
+                    return None
+                return parsed if math.isfinite(parsed) else None
+
+            usage = number(usage_raw)
+            used_mib = number(used_raw)
+            total_mib = number(total_raw)
+            temperature = number(temperature_raw)
+            metadata = {"gpu_index": index, "gpu_name": name}
+            if used_mib is not None:
+                metadata["memory_used_mib"] = used_mib
+            if total_mib is not None:
+                metadata["memory_total_mib"] = total_mib
+
+            if usage is not None:
+                metrics.append(
+                    self._metric(
+                        "system.gpu.utilization", usage, "%", timestamp, metadata
+                    )
                 )
-            )
+            if used_mib is not None:
+                metrics.append(
+                    self._metric(
+                        "system.gpu.memory.used",
+                        used_mib * 1024**2,
+                        "bytes",
+                        timestamp,
+                        metadata,
+                    )
+                )
+            if used_mib is not None and total_mib and total_mib > 0:
+                metrics.append(
+                    self._metric(
+                        "system.gpu.memory.utilization",
+                        used_mib / total_mib * 100,
+                        "%",
+                        timestamp,
+                        metadata,
+                    )
+                )
+            if temperature is not None:
+                metrics.append(
+                    self._metric(
+                        "system.gpu.temperature",
+                        temperature,
+                        "celsius",
+                        timestamp,
+                        metadata,
+                    )
+                )
         return metrics
 
     def _services(self, timestamp):

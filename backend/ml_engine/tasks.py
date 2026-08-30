@@ -34,7 +34,7 @@ def train_model(self, customer_id, days=30, idempotency_key=None):
     max_retries=5,
 )
 def analyze_customer(self, customer_id, idempotency_key=None):
-    bucket = datetime.now(dt_timezone.utc).strftime("%Y%m%d%H%M")[:-1]
+    bucket = datetime.now(dt_timezone.utc).strftime("%Y%m%d%H%M")
     return run_once(
         "ml.analyze_customer",
         idempotency_key or f"{customer_id}:{bucket}",
