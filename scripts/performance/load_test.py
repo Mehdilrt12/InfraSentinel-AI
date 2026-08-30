@@ -37,7 +37,7 @@ django.setup()
 import redis  # noqa: E402
 from accounts.models import Customer  # noqa: E402
 from django.conf import settings  # noqa: E402
-from django.db import close_old_connections, connection  # noqa: E402
+from django.db import close_old_connections, connection, transaction  # noqa: E402
 from inventory.models import Environment, Machine  # noqa: E402
 from inventory.services import create_enrollment_code, enroll_agent  # noqa: E402
 
@@ -92,6 +92,12 @@ class RequestStatistics:
             )
             self.accepted_metrics += accepted
 
+    def reset(self):
+        """Discard warm-up observations before the measured window starts."""
+        with self._lock:
+            self.records.clear()
+            self.accepted_metrics = 0
+
     def summarize(self, elapsed_seconds):
         total = len(self.records)
         failures = [row for row in self.records if not 200 <= row["status"] < 300]
@@ -110,6 +116,7 @@ class RequestStatistics:
             "latency_ms": {
                 "mean": round(safe_mean(latencies), 3),
                 "p50": round(percentile(latencies, 0.50), 3),
+                "p90": round(percentile(latencies, 0.90), 3),
                 "p95": round(percentile(latencies, 0.95), 3),
                 "p99": round(percentile(latencies, 0.99), 3),
                 "max": round(max(latencies, default=0.0), 3),
@@ -117,6 +124,7 @@ class RequestStatistics:
             "metric_request_latency_ms": {
                 "mean": round(safe_mean(metric_latencies), 3),
                 "p50": round(percentile(metric_latencies, 0.50), 3),
+                "p90": round(percentile(metric_latencies, 0.90), 3),
                 "p95": round(percentile(metric_latencies, 0.95), 3),
                 "p99": round(percentile(metric_latencies, 0.99), 3),
                 "max": round(max(metric_latencies, default=0.0), 3),
@@ -351,6 +359,7 @@ def processing_latency(customer_id, stage_name):
               FROM metrics_normalizedmetric
              WHERE customer_id = %s
                AND metadata ->> 'load_stage' = %s
+               AND metadata ->> 'load_phase' = 'measurement'
             """,
             [str(customer_id), stage_name],
         )
@@ -392,7 +401,7 @@ def metric_value(name, agent_index, sequence, rng):
     return 1
 
 
-def build_metrics(run_id, stage_name, agent_index, sequence, rng):
+def build_metrics(run_id, stage_name, load_phase, agent_index, sequence, rng):
     timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
     rows = []
     for metric_name, unit in METRIC_DEFINITIONS:
@@ -407,8 +416,10 @@ def build_metrics(run_id, stage_name, agent_index, sequence, rng):
                 "unit": unit,
                 "status": status,
                 "metadata": {
+                    "test_marker": "CONTROLLED_TEST",
                     "load_run_id": run_id,
                     "load_stage": stage_name,
+                    "load_phase": load_phase,
                     "collector": "phase24-realistic-windows",
                     **(
                         {"service_name": "W32Time"}
@@ -458,7 +469,7 @@ def agent_worker(
     run_id,
     stage_name,
     start_event,
-    stage_end,
+    timing,
     interval_seconds,
     heartbeat_seconds,
     statistics,
@@ -467,6 +478,7 @@ def agent_worker(
     session.trust_env = False
     rng = random.Random(f"{run_id}:{stage_name}:{agent_index}")
     start_event.wait()
+    stage_end = timing["stage_end"]
     sequence = 0
     next_request = time.monotonic() + rng.uniform(0, interval_seconds)
     next_heartbeat = next_request
@@ -492,7 +504,14 @@ def agent_worker(
             next_heartbeat = max(
                 next_heartbeat + heartbeat_seconds, time.monotonic()
             )
-        metrics = build_metrics(run_id, stage_name, agent_index, sequence, rng)
+        load_phase = (
+            "measurement"
+            if time.monotonic() >= timing["measurement_start"]
+            else "warmup"
+        )
+        metrics = build_metrics(
+            run_id, stage_name, load_phase, agent_index, sequence, rng
+        )
         send_request(
             session,
             "POST",
@@ -509,39 +528,48 @@ def agent_worker(
 
 def provision_agents(run_id, count):
     customer = Customer.objects.create(
-        name=f"Performance Test {run_id}", slug=f"perf-{run_id.lower()}"
+        name=f"CONTROLLED_TEST {run_id}", slug=f"controlled-test-{run_id.lower()}"
     )
-    environment = Environment.objects.create(
-        customer=customer,
-        name="Windows Load Environment",
-        kind=Environment.Kind.WINDOWS,
-        metadata={"load_test": True, "run_id": run_id},
-    )
-    agents = []
-    for index in range(count):
-        code = create_enrollment_code(customer, environment, ttl_minutes=60)
-        agent, token = enroll_agent(
-            code,
-            external_id=f"load-{run_id}-{index:03d}",
-            hostname=f"LOAD-WIN-{index:03d}",
-            ip_address=f"10.240.{index // 254}.{index % 254 + 1}",
-            os_information={
-                "system": "Windows",
-                "release": "Server 2022",
-                "architecture": "AMD64",
+    try:
+        environment = Environment.objects.create(
+            customer=customer,
+            name="Windows Load Environment",
+            kind=Environment.Kind.WINDOWS,
+            metadata={
+                "test_marker": "CONTROLLED_TEST",
                 "load_test": True,
+                "run_id": run_id,
             },
-            version="2.0.0-load",
-            audit_ip="127.0.0.1",
         )
-        agents.append(
-            {
-                "agent_id": str(agent.pk),
-                "machine_id": str(agent.machine_id),
-                "token": token,
-            }
-        )
-    return customer, agents
+        agents = []
+        for index in range(count):
+            code = create_enrollment_code(customer, environment, ttl_minutes=60)
+            agent, token = enroll_agent(
+                code,
+                external_id=f"load-{run_id}-{index:03d}",
+                hostname=f"LOAD-WIN-{index:03d}",
+                ip_address=f"10.240.{index // 254}.{index % 254 + 1}",
+                os_information={
+                    "system": "Windows",
+                    "release": "Server 2022",
+                    "architecture": "AMD64",
+                    "test_marker": "CONTROLLED_TEST",
+                    "load_test": True,
+                },
+                version="2.0.0-load",
+                audit_ip="127.0.0.1",
+            )
+            agents.append(
+                {
+                    "agent_id": str(agent.pk),
+                    "machine_id": str(agent.machine_id),
+                    "token": token,
+                }
+            )
+        return customer, agents
+    except Exception:
+        cleanup_customer(customer)
+        raise
 
 
 def database_metadata():
@@ -559,13 +587,8 @@ def run_stage(args, customer, agents, agent_count, redis_client):
     stage_name = f"agents-{agent_count}"
     statistics = RequestStatistics()
     monitor = ResourceMonitor(args.backend_pid)
-    before_db = database_snapshot(include_row_counts=True)
-    before_redis = redis_snapshot(redis_client)
-    started_wall = datetime.now(timezone.utc)
-    started = time.monotonic()
-    stage_end = started + args.duration
     start_event = threading.Event()
-    monitor.start()
+    timing = {"stage_end": None, "measurement_start": None}
     with ThreadPoolExecutor(max_workers=agent_count) as executor:
         futures = [
             executor.submit(
@@ -576,17 +599,28 @@ def run_stage(args, customer, agents, agent_count, redis_client):
                 args.run_id,
                 stage_name,
                 start_event,
-                stage_end,
+                timing,
                 args.interval,
                 args.heartbeat_interval,
                 statistics,
             )
             for index in range(agent_count)
         ]
+        started = time.monotonic()
+        timing["measurement_start"] = started + args.warmup
+        timing["stage_end"] = timing["measurement_start"] + args.duration
         start_event.set()
+        if args.warmup:
+            time.sleep(args.warmup)
+        statistics.reset()
+        before_db = database_snapshot(include_row_counts=True)
+        before_redis = redis_snapshot(redis_client)
+        started_wall = datetime.now(timezone.utc)
+        measured_started = time.monotonic()
+        monitor.start()
         for future in futures:
             future.result()
-    elapsed = time.monotonic() - started
+    elapsed = time.monotonic() - measured_started
     monitor.stop()
     after_db = database_snapshot(include_row_counts=True)
     after_redis = redis_snapshot(redis_client)
@@ -598,6 +632,7 @@ def run_stage(args, customer, agents, agent_count, redis_client):
             "started_at": started_wall.isoformat(),
             "duration_seconds": round(elapsed, 3),
             "configured_duration_seconds": args.duration,
+            "warmup_seconds": args.warmup,
             "request_interval_seconds": args.interval,
             "metrics_per_batch": len(METRIC_DEFINITIONS),
             "metric_processing_latency": processing_latency(
@@ -611,14 +646,24 @@ def run_stage(args, customer, agents, agent_count, redis_client):
     return summary
 
 
+@transaction.atomic
 def cleanup_customer(customer):
-    machine_deleted = Machine.objects.filter(customer=customer).delete()[0]
-    environment_deleted = Environment.objects.filter(customer=customer).delete()[0]
-    customer_deleted = Customer.objects.filter(pk=customer.pk).delete()[0]
+    """Delete exactly one controlled tenant while blocking concurrent FK inserts."""
+    locked_customer = Customer.objects.select_for_update().get(pk=customer.pk)
+    machine_count = Machine.objects.filter(customer=locked_customer).count()
+    environment_count = Environment.objects.filter(customer=locked_customer).count()
+    machine_deleted = Machine.objects.filter(customer=locked_customer).delete()[0]
+    environment_deleted = Environment.objects.filter(
+        customer=locked_customer
+    ).delete()[0]
+    customer_deleted, deleted_by_model = locked_customer.delete()
     return {
+        "machine_count": machine_count,
+        "environment_count": environment_count,
         "machine_cascade_deleted": machine_deleted,
         "environment_cascade_deleted": environment_deleted,
         "customer_cascade_deleted": customer_deleted,
+        "cascade_deleted_by_model": deleted_by_model,
     }
 
 
@@ -628,6 +673,7 @@ def parse_args():
     parser.add_argument("--backend-pid", type=int, required=True)
     parser.add_argument("--stages", default="1,10,25,50,100")
     parser.add_argument("--duration", type=float, default=30.0)
+    parser.add_argument("--warmup", type=float, default=15.0)
     parser.add_argument("--interval", type=float, default=1.0)
     parser.add_argument("--heartbeat-interval", type=float, default=60.0)
     parser.add_argument("--cooldown", type=float, default=5.0)
@@ -640,10 +686,23 @@ def parse_args():
 def main():
     args = parse_args()
     stages = [int(value) for value in args.stages.split(",") if value.strip()]
-    if not stages or any(value < 1 or value > 1000 for value in stages):
-        raise SystemExit("Les paliers doivent contenir entre 1 et 1000 agents.")
-    if args.duration < 5 or args.interval <= 0 or args.heartbeat_interval <= 0:
-        raise SystemExit("Durée minimale: 5 s; intervalles strictement positifs.")
+    if not stages or any(value < 1 or value > 500 for value in stages):
+        raise SystemExit("Les paliers doivent contenir entre 1 et 500 agents.")
+    if stages != sorted(set(stages)):
+        raise SystemExit("Les paliers doivent être uniques et strictement croissants.")
+    parsed_url = urlparse(args.base_url)
+    if parsed_url.scheme != "http" or parsed_url.hostname not in {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    }:
+        raise SystemExit("La cible de charge doit être une API HTTP loopback locale.")
+    if not 5 <= args.duration <= 60:
+        raise SystemExit("La fenêtre mesurée doit durer entre 5 et 60 secondes.")
+    if not 0 <= args.warmup <= 15 or not 0 <= args.cooldown <= 30:
+        raise SystemExit("Warmup maximum: 15 s; cooldown maximum: 30 s.")
+    if args.interval <= 0 or args.heartbeat_interval <= 0:
+        raise SystemExit("Les intervalles doivent être strictement positifs.")
     if not psutil.pid_exists(args.backend_pid):
         raise SystemExit(f"Processus backend introuvable: {args.backend_pid}")
 
@@ -658,6 +717,7 @@ def main():
         "method": {
             "stages": stages,
             "duration_seconds": args.duration,
+            "warmup_seconds": args.warmup,
             "interval_seconds": args.interval,
             "heartbeat_interval_seconds": args.heartbeat_interval,
             "metrics_per_batch": len(METRIC_DEFINITIONS),
@@ -688,28 +748,60 @@ def main():
         },
         "stages": [],
         "cleanup": None,
+        "stopped_after_stage": None,
+        "stop_reason": None,
     }
     try:
         customer, agents = provision_agents(args.run_id, max(stages))
         for index, agent_count in enumerate(stages):
             result = run_stage(args, customer, agents, agent_count, redis_client)
             report["stages"].append(result)
+            output.write_text(json.dumps(report, indent=2), encoding="utf-8")
             print(
                 f"{agent_count:>3} agents | {result['requests_per_second']:>7.2f} req/s | "
+                f"p90 {result['latency_ms']['p90']:>8.2f} ms | "
                 f"p95 {result['latency_ms']['p95']:>8.2f} ms | "
                 f"errors {result['error_rate_percent']:>6.2f}% | "
                 f"CPU {result['resources']['backend']['cpu_percent_mean']:>6.2f}%",
                 flush=True,
             )
+            resource_result = result["resources"]
+            stop_reasons = []
+            if result["error_rate_percent"] > 0:
+                stop_reasons.append("HTTP errors observed")
+            if result["latency_ms"]["p95"] > 2000:
+                stop_reasons.append("p95 latency exceeded 2000 ms")
+            if resource_result["host"]["memory_percent_max"] >= 90:
+                stop_reasons.append("host RAM reached 90 percent")
+            if resource_result["postgresql"]["deadlocks_delta"] > 0:
+                stop_reasons.append("PostgreSQL deadlock observed")
+            if resource_result["monitor_errors"]:
+                stop_reasons.append("resource monitor failed")
+            if stop_reasons:
+                report["stopped_after_stage"] = result["stage"]
+                report["stop_reason"] = "; ".join(stop_reasons)
+                print(f"Safety gate stopped progression: {report['stop_reason']}", flush=True)
+                break
             if index < len(stages) - 1:
                 time.sleep(args.cooldown)
     finally:
-        if customer and not args.keep_data:
-            report["cleanup"] = cleanup_customer(customer)
-        elif customer:
-            report["cleanup"] = {"kept_customer_id": str(customer.pk)}
-        output.write_text(json.dumps(report, indent=2), encoding="utf-8")
-        print(f"Report: {output}", flush=True)
+        cleanup_error = None
+        try:
+            if customer and not args.keep_data:
+                report["cleanup"] = cleanup_customer(customer)
+            elif customer:
+                report["cleanup"] = {"kept_customer_id": str(customer.pk)}
+        except Exception as exc:
+            cleanup_error = exc
+            report["cleanup"] = {
+                "status": "FAILED",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        finally:
+            output.write_text(json.dumps(report, indent=2), encoding="utf-8")
+            print(f"Report: {output}", flush=True)
+        if cleanup_error:
+            raise cleanup_error
     return 0
 
 

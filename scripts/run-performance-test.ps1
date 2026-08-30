@@ -2,6 +2,7 @@
 param(
     [string]$Stages = '1,10,25,50,100',
     [double]$DurationSeconds = 30,
+    [double]$WarmupSeconds = 15,
     [double]$IntervalSeconds = 1,
     [double]$HeartbeatIntervalSeconds = 60,
     [double]$CooldownSeconds = 5,
@@ -77,6 +78,7 @@ try {
         --backend-pid $backendPid `
         --stages $Stages `
         --duration $DurationSeconds `
+        --warmup $WarmupSeconds `
         --interval $IntervalSeconds `
         --heartbeat-interval $HeartbeatIntervalSeconds `
         --cooldown $CooldownSeconds `

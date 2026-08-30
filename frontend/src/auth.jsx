@@ -40,3 +40,10 @@ export function Protected({ children }) {
   if (loading) return <div className="center-state"><span className="spinner" />Chargement de la session…</div>
   return user ? children : <Navigate to="/login" replace state={{ from: location }} />
 }
+
+export function RoleProtected({ children, administrator = false }) {
+  const { user, loading } = useAuth()
+  if (loading) return <div className="center-state"><span className="spinner" />Chargement des autorisations…</div>
+  const allowed = administrator ? isAdministrator(user) : isManager(user)
+  return allowed ? children : <Navigate to="/dashboard" replace />
+}

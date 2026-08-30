@@ -14,6 +14,7 @@ class MLModelVersion(models.Model):
     customer = models.ForeignKey(
         Customer, on_delete=models.CASCADE, related_name="ml_models"
     )
+    display_number = models.PositiveBigIntegerField(editable=False)
     version = models.CharField(max_length=80)
     algorithm = models.CharField(max_length=80, default="IsolationForest")
     features = models.JSONField(default=list)
@@ -34,6 +35,10 @@ class MLModelVersion(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=["customer", "version"], name="uniq_ml_customer_version"
+            ),
+            models.UniqueConstraint(
+                fields=["customer", "display_number"],
+                name="uniq_ml_customer_display_number",
             ),
             models.UniqueConstraint(
                 fields=["customer"],

@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Max
 from django.utils import timezone
 from sklearn.ensemble import IsolationForest
 from sklearn.impute import SimpleImputer
@@ -116,8 +117,15 @@ def train_customer_model(customer_id, *, days=30, dataset_metadata=None):
             MLModelVersion.objects.filter(customer=customer, active=True).update(
                 active=False
             )
+            next_display_number = (
+                MLModelVersion.objects.filter(customer=customer).aggregate(
+                    maximum=Max("display_number")
+                )["maximum"]
+                or 0
+            ) + 1
             model = MLModelVersion.objects.create(
                 customer=customer,
+                display_number=next_display_number,
                 version=version_name,
                 features=FEATURES,
                 preprocessing={

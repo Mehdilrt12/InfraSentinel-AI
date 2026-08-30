@@ -64,12 +64,14 @@ class MLAPITests(TenantAPITestCase):
     def test_model_api_hides_artifact_and_is_customer_isolated(self):
         own = MLModelVersion.objects.create(
             customer=self.customer_a,
+            display_number=1,
             version="own-model",
             artifact_path="secret/path.joblib",
             status=MLModelVersion.Status.READY,
         )
         foreign = MLModelVersion.objects.create(
             customer=self.customer_b,
+            display_number=1,
             version="foreign-model",
             artifact_path="foreign/path.joblib",
             status=MLModelVersion.Status.READY,
@@ -81,6 +83,51 @@ class MLAPITests(TenantAPITestCase):
         self.assertNotIn(str(foreign.pk), ids)
         self.assertNotIn("artifact_path", response.data["results"][0])
         self.assertEqual(self.client.get(f"/api/ml/models/{foreign.pk}/").status_code, 404)
+
+    def test_model_display_number_is_stable_and_preserves_technical_version(self):
+        oldest = MLModelVersion.objects.create(
+            customer=self.customer_a,
+            display_number=1,
+            version="iforest-20260827T230000-oldest",
+            algorithm="IsolationForest",
+            status=MLModelVersion.Status.READY,
+        )
+        latest = MLModelVersion.objects.create(
+            customer=self.customer_a,
+            display_number=2,
+            version="iforest-20260827T234946-0dbe1975",
+            algorithm="IsolationForest",
+            status=MLModelVersion.Status.READY,
+            active=True,
+        )
+        MLModelVersion.objects.create(
+            customer=self.customer_b,
+            display_number=1,
+            version="iforest-foreign",
+            status=MLModelVersion.Status.READY,
+        )
+        self.authenticate()
+
+        first = self.client.get("/api/ml/models/")
+        second = self.client.get("/api/ml/models/")
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first.data["results"], second.data["results"])
+        self.assertEqual(
+            [row["display_number"] for row in first.data["results"]],
+            [2, 1],
+        )
+
+        rows = {row["version"]: row for row in first.data["results"]}
+        self.assertEqual(rows[oldest.version]["display_number"], 1)
+        self.assertEqual(rows[latest.version]["display_number"], 2)
+        self.assertEqual(rows[latest.version]["version"], latest.version)
+        self.assertTrue(rows[latest.version]["active"])
+
+        detail = self.client.get(f"/api/ml/models/{latest.pk}/")
+        self.assertEqual(detail.data["display_number"], 2)
+        self.assertEqual(detail.data["version"], latest.version)
+        self.assertTrue(detail.data["active"])
 
 
 class PredictiveAnalysisTests(TenantAPITestCase):

@@ -75,6 +75,7 @@ class MLDatasetAndTrainingTests(TenantAPITestCase):
         self.assertEqual(PARAMETERS["random_state"], 42)
         model = MLModelVersion.objects.create(
             customer=self.customer_a,
+            display_number=1,
             version="metadata-test",
             features=FEATURES,
             parameters=PARAMETERS,
@@ -88,6 +89,7 @@ class MLDatasetAndTrainingTests(TenantAPITestCase):
     def test_postgresql_enforces_one_active_model_per_customer(self):
         MLModelVersion.objects.create(
             customer=self.customer_a,
+            display_number=1,
             version="active-one",
             status=MLModelVersion.Status.READY,
             active=True,
@@ -95,10 +97,33 @@ class MLDatasetAndTrainingTests(TenantAPITestCase):
         with self.assertRaises(IntegrityError), transaction.atomic():
             MLModelVersion.objects.create(
                 customer=self.customer_a,
+                display_number=2,
                 version="active-two",
                 status=MLModelVersion.Status.READY,
                 active=True,
             )
+
+    def test_postgresql_enforces_stable_display_number_per_customer(self):
+        MLModelVersion.objects.create(
+            customer=self.customer_a,
+            display_number=1,
+            version="display-one",
+            status=MLModelVersion.Status.READY,
+        )
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            MLModelVersion.objects.create(
+                customer=self.customer_a,
+                display_number=1,
+                version="display-duplicate",
+                status=MLModelVersion.Status.READY,
+            )
+        other_customer_model = MLModelVersion.objects.create(
+            customer=self.customer_b,
+            display_number=1,
+            version="display-other-customer",
+            status=MLModelVersion.Status.READY,
+        )
+        self.assertEqual(other_customer_model.display_number, 1)
 
     def test_evaluation_matches_rule_and_ml_events_without_inventing_labels(self):
         alert, _ = create_or_update_alert(
@@ -151,6 +176,7 @@ class MLInferenceTests(TenantAPITestCase):
         joblib.dump(FixedScorePipeline(list(decisions)), artifact)
         values = {
             "customer": self.customer_a,
+            "display_number": 1,
             "version": "iforest-inference",
             "features": FEATURES,
             "parameters": PARAMETERS,

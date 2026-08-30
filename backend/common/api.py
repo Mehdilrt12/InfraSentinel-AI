@@ -600,7 +600,7 @@ class AnomalyViewSet(TenantViewSet):
     permissions=["ADMIN", "SUPERVISOR"],
 )
 class MLModelViewSet(TenantViewSet):
-    queryset = MLModelVersion.objects.order_by("-created_at", "pk")
+    queryset = MLModelVersion.objects.order_by("-display_number", "pk")
     serializer_class = MLModelSerializer
     http_method_names = ["get", "post", "patch", "head", "options"]
 

@@ -1,6 +1,6 @@
 import { lazy, Suspense } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
-import { AuthProvider, Protected } from './auth'
+import { AuthProvider, Protected, RoleProtected } from './auth'
 import { RealtimeProvider } from './realtime'
 import { Layout } from './components'
 const Login = lazy(() => import('./pages/AuthPages').then((module) => ({ default: module.Login })))
@@ -20,7 +20,10 @@ export default function App() {
       <Route path="/dashboard" element={<Dashboard />} /><Route path="/machines" element={<Machines />} /><Route path="/machines/:id" element={<MachineDetail />} />
       <Route path="/agents" element={<Agents />} /><Route path="/alerts" element={<Alerts />} /><Route path="/anomalies" element={<Anomalies />} />
       <Route path="/vmware" element={<VMware />} /><Route path="/vmware/:id" element={<VMwareDetail />} /><Route path="/hyperv" element={<HyperV />} /><Route path="/hyperv/:id" element={<HyperVDetail />} />
-      <Route path="/ml" element={<ML />} /><Route path="/users" element={<Users />} /><Route path="/settings" element={<SettingsPage />} /><Route path="/audit" element={<Audit />} />
+      <Route path="/ml" element={<ML />} />
+      <Route path="/users" element={<RoleProtected administrator><Users /></RoleProtected>} />
+      <Route path="/settings" element={<RoleProtected><SettingsPage /></RoleProtected>} />
+      <Route path="/audit" element={<RoleProtected><Audit /></RoleProtected>} />
     </Route>
     <Route path="/" element={<Navigate to="/dashboard" replace />} /><Route path="*" element={<Navigate to="/dashboard" replace />} />
   </Routes></Suspense></AuthProvider>

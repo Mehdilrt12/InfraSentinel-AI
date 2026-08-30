@@ -453,6 +453,13 @@ class MLReviewTests(ReviewBase):
 
     def test_training_uses_chronological_holdout_and_relative_artifact(self):
         self._seed_test_fixture_metrics()
+        previous = MLModelVersion.objects.create(
+            customer=self.customer,
+            display_number=1,
+            version="iforest-previous-technical-id",
+            status=MLModelVersion.Status.READY,
+            active=True,
+        )
         with (
             tempfile.TemporaryDirectory() as directory,
             patch("ml_engine.pipeline.MODEL_DIR", Path(directory)),
@@ -463,6 +470,12 @@ class MLReviewTests(ReviewBase):
                 dataset_metadata={"synthetic": True, "demo_suite": "tests"},
             )
             model = MLModelVersion.objects.get(pk=result["model_id"])
+            previous.refresh_from_db()
+            self.assertFalse(previous.active)
+            self.assertEqual(previous.display_number, 1)
+            self.assertEqual(previous.version, "iforest-previous-technical-id")
+            self.assertTrue(model.active)
+            self.assertEqual(model.display_number, 2)
             self.assertEqual(
                 model.evaluation_metrics["method"], "chronological_holdout"
             )

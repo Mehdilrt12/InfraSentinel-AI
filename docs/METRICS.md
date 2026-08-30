@@ -71,3 +71,33 @@ Les tests couvrent les aliases multi-sources, conversions, validations, lots,
 idempotence et isolation tenant. Une métrique absente du dashboard doit être
 recherchée via `/api/metrics/?machine=<uuid>&metric_name=<nom>` puis dans les logs
 d'ingestion. Une valeur `null` n'est pas inventée ni évaluée par les seuils.
+
+## Contrat de présentation frontend
+
+Le frontend utilise le nom canonique et l'unité fournis par l'API ; il ne déduit
+jamais la sémantique uniquement à partir de la taille d'un nombre.
+
+| Nom canonique | Unité API | Échelle/sémantique | Présentation française |
+|---|---|---|---|
+| `system.cpu.utilization` | `%` | 0–100 | `43,2 %` |
+| `system.memory.utilization` | `%` | 0–100, capacités en metadata Windows | `65 %`, détail `10,4 Go / 16 Go` si disponible |
+| `system.disk.utilization` | `%` | 0–100 par volume | `43,2 %` |
+| `system.disk.free` | `bytes` | octets binaires | `542 Go` |
+| `system.disk.io.read/write` | `bytes/s` | octets par seconde | `12,7 Mo/s` |
+| `system.network.in/out` | `bytes/s` | octets par seconde | `2,4 Mo/s` |
+| `system.network.latency` | `ms` | millisecondes | `28 ms`, puis `1,4 s` |
+| `system.uptime` | `seconds` | durée | `4 j 7 h 22 min` |
+| `system.process.count` | `count` | compteur | `183` |
+| `system.gpu.utilization` | `%` | 0–100 | `72 %` |
+| `windows.service.state` | `state` | 0/1 + `status` | `En cours` / `Arrêté` |
+| `virtual.machine.state` | `state` | 0/1 + `status` | `En marche` / `Arrêtée` |
+
+Windows (`psutil`/`nvidia-smi`), VMware et Hyper-V produisent déjà les
+pourcentages en échelle 0–100. Le frontend ne multiplie donc pas ces valeurs.
+Les fractions de paramètres ML, comme `contamination`, sont converties en
+pourcentage uniquement parce que leur contrat le précise.
+
+Les capacités utilisent un facteur 1024 (`Ko`, `Mo`, `Go`, `To`). Les débits en
+bits, lorsqu'un contrat les annonce explicitement, utilisent `Kb/s`, `Mb/s` et
+`Gb/s` avec un facteur 1000. Une valeur absente reste `—` et n'est jamais
+transformée en `0`.
