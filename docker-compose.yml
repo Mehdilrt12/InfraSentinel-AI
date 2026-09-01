@@ -206,8 +206,11 @@ services:
       dockerfile: frontend/Dockerfile
       args:
         VITE_API_URL: ${VITE_API_URL:-/api}
+        VITE_WS_URL: ${VITE_WS_URL:-}
         VITE_PUBLIC_REGISTRATION_ENABLED: ${VITE_PUBLIC_REGISTRATION_ENABLED:-false}
         VITE_ENABLE_SOURCEMAPS: ${VITE_ENABLE_SOURCEMAPS:-false}
+        VITE_POLL_INTERVAL_MS: ${VITE_POLL_INTERVAL_MS:-30000}
+        VITE_AGENT_INSTALLER_URL: ${VITE_AGENT_INSTALLER_URL:-}
     init: true
     read_only: true
     security_opt:
