@@ -277,7 +277,7 @@ export default function UsersPage() {
           tone="critical"
         />
       </div>
-      <div className="inline-notice inline-notice--warning">
+      <div className="inline-notice inline-notice--warning users-admin-warning">
         <Shield />
         Le backend permet actuellement à un administrateur de se rétrograder, se
         désactiver ou se supprimer. Vérifiez toujours qu’un autre administrateur
